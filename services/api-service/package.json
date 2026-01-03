@@ -1,0 +1,31 @@
+{
+  "name": "api-service",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "nodemon index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@google/genai": "^1.29.1",
+    "amqplib": "^0.10.9",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "googleapis": "^167.0.0",
+    "html-to-text": "^9.0.5",
+    "imap": "^0.8.19",
+    "jsonwebtoken": "^9.0.2",
+    "mailparser": "^3.9.0",
+    "nodemailer": "^7.0.10",
+    "nodemon": "^3.1.11",
+    "pg": "^8.16.3",
+    "protobufjs": "^7.5.4",
+    "weaviate-client": "^3.9.0"
+  }
+}
