@@ -2,6 +2,7 @@ require("dotenv").config("../../.env");
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const authenticateToken = require("./auth.middleware");
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -145,6 +146,43 @@ function createAuthRouter(pgPool, genAI) {
       if (client) {
         client.release();
       }
+    }
+  });
+
+  router.get("/settings", authenticateToken, async (req, res) => {
+    try {
+      // FIX: Access 'req.user.user.id' instead of 'req.user.user_id'
+      // The middleware decodes the token, and your token has a 'user' property inside.
+      const userId = req.user.id;
+
+      const result = await pgPool.query(
+        "SELECT settings FROM users WHERE user_id = $1",
+        [userId]
+      );
+      console.log("settings opened");
+      res.json(result.rows[0]?.settings || {});
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Failed to fetch settings" });
+    }
+  });
+
+  // [PATCH] /settings
+  router.patch("/settings", authenticateToken, async (req, res) => {
+    const newSettings = req.body;
+    try {
+      // FIX: Access 'req.user.user.id' here too
+      const userId = req.user.id;
+
+      await pgPool.query(
+        "UPDATE users SET settings = COALESCE(settings, '{}'::jsonb) || $1 WHERE user_id = $2",
+        [JSON.stringify(newSettings), userId]
+      );
+      console.log("settings updated", newSettings);
+      res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Failed to update settings" });
     }
   });
 

@@ -69,7 +69,11 @@ async function main() {
 
     app.use("/calendar", authenticateToken, calendarRoutes());
 
-    app.use("/emails", authenticateToken, createEmailActionsRouter(pgPool));
+    app.use(
+      "/emails",
+      authenticateToken,
+      createEmailActionsRouter(pgPool, weaviateClient)
+    );
 
     startEmailWorker();
 

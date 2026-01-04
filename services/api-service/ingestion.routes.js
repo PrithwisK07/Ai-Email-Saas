@@ -158,9 +158,30 @@ function createIngestionRouter(pgPool) {
   });
 
   router.get("/list", async (req, res) => {
-    const { tenant_id } = req.user;
+    const { tenant_id, user_id } = req.user;
 
     try {
+      // 1. GET USER SETTINGS (Default to 30 days if not set)
+      const userRes = await pgPool.query(
+        "SELECT settings FROM users WHERE user_id = $1",
+        [user_id]
+      );
+      const retentionDays =
+        userRes.rows[0]?.settings?.trash_retention_days || 30;
+
+      // 2. PERMANENT DELETE (If retention is NOT 'never')
+      if (retentionDays !== "never") {
+        // Note: Vectors are already deleted when moved to trash,
+        // so we only need to clean the SQL table here.
+        await pgPool.query(
+          `DELETE FROM emails 
+             WHERE status = 'trash' 
+             AND updated_at < NOW() - INTERVAL '${retentionDays} days' 
+             AND tenant_id = $1`,
+          [tenant_id]
+        );
+      }
+
       await pgPool.query(
         `UPDATE emails 
          SET status = 'inbox', snooze_until = NULL, snoozed_at = NULL 

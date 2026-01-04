@@ -1,23 +1,60 @@
 "use client";
 import React, { useState, useEffect } from 'react';
-import { X, Save, User } from 'lucide-react';
+import { X, Save, User, ChevronDown, Loader2 } from 'lucide-react';
+import { AuthService } from '@/lib/endpoints';
+import { toast } from '@/components/ui/toast'; // <--- Import Toast
 
 export default function SettingsModal({ onClose }) {
     const [signature, setSignature] = useState("");
+    const [retention, setRetention] = useState("30");
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
 
+    // 1. Fetch Settings on Mount
     useEffect(() => {
-        const saved = localStorage.getItem("mailWise_signature");
-        if (saved) setSignature(saved);
+        async function load() {
+            try {
+                const data = await AuthService.getSettings();
+                if (data.signature) setSignature(data.signature);
+                if (data.trash_retention_days) setRetention(String(data.trash_retention_days));
+            } catch (e) {
+                console.error("Failed to load settings", e);
+                toast.error("Could not load your settings.");
+            } finally {
+                setLoading(false);
+            }
+        }
+        load();
     }, []);
 
-    const handleSave = () => {
-        localStorage.setItem("mailWise_signature", signature);
-        onClose();
+    // 2. Save Settings
+    const handleSave = async () => {
+        setSaving(true);
+        try {
+            await AuthService.updateSettings({
+                signature: signature,
+                trash_retention_days: retention
+            });
+
+            // Update local storage for immediate access in Compose
+            localStorage.setItem("zenith_signature", signature);
+
+            toast.success("Settings saved successfully!"); // <--- Success Toast
+            onClose();
+        } catch (e) {
+            console.error("Failed to save", e);
+            toast.error("Failed to save settings. Please try again."); // <--- Error Toast
+        } finally {
+            setSaving(false);
+        }
     };
+
+    if (loading) return null;
 
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in">
             <div className="bg-[#141416] w-full max-w-md rounded-xl border border-zinc-800 shadow-2xl overflow-hidden">
+                {/* Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-900/30">
                     <h2 className="font-semibold text-zinc-100 flex items-center gap-2">
                         <User size={18} className="text-indigo-400" /> Account Settings
@@ -25,7 +62,8 @@ export default function SettingsModal({ onClose }) {
                     <button onClick={onClose}><X size={18} className="text-zinc-500 hover:text-white" /></button>
                 </div>
 
-                <div className="p-6 space-y-4">
+                <div className="p-6 space-y-6">
+                    {/* Signature */}
                     <div>
                         <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider block mb-2">Email Signature</label>
                         <textarea
@@ -34,14 +72,36 @@ export default function SettingsModal({ onClose }) {
                             value={signature}
                             onChange={(e) => setSignature(e.target.value)}
                         />
-                        <p className="text-xs text-zinc-500 mt-2">This will be appended to every new email you compose.</p>
+                    </div>
+
+                    {/* Retention */}
+                    <div>
+                        <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider block mb-2">Trash Auto-Deletion</label>
+                        <div className="relative">
+                            <select
+                                value={retention}
+                                onChange={(e) => setRetention(e.target.value)}
+                                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-3 text-sm text-zinc-200 outline-none focus:border-indigo-500 appearance-none cursor-pointer"
+                            >
+                                <option value="30">Delete after 30 days</option>
+                                <option value="60">Delete after 60 days</option>
+                                <option value="90">Delete after 90 days</option>
+                                <option value="never">Never delete</option>
+                            </select>
+                            <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500">
+                                <ChevronDown size={14} />
+                            </div>
+                        </div>
+                        <p className="text-xs text-zinc-500 mt-2">Emails in trash older than this will be permanently removed.</p>
                     </div>
                 </div>
 
+                {/* Footer */}
                 <div className="p-4 border-t border-zinc-800 bg-zinc-900/30 flex justify-end gap-2">
                     <button onClick={onClose} className="px-4 py-2 text-xs font-medium text-zinc-400 hover:text-white transition-colors">Cancel</button>
-                    <button onClick={handleSave} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded-md flex items-center gap-2">
-                        <Save size={14} /> Save Changes
+                    <button onClick={handleSave} disabled={saving} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded-md flex items-center gap-2 disabled:opacity-50">
+                        {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                        Save Changes
                     </button>
                 </div>
             </div>

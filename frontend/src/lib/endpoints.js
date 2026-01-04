@@ -22,6 +22,15 @@ export const AuthService = {
     if (typeof window === "undefined") return false;
     return !!localStorage.getItem("mailWise_token");
   },
+
+  getSettings: async () => {
+    const res = await api.get("/auth/settings");
+    return res.data;
+  },
+
+  updateSettings: async (settings) => {
+    return api.patch("/auth/settings", settings);
+  },
 };
 
 export const EmailService = {
@@ -88,5 +97,10 @@ export const ActionService = {
 
   snooze: async (id, date) => {
     return api.patch(`/emails/${id}/snooze`, { snooze_until: date });
+  },
+
+  deleteForever: async (id) => {
+    // Calls DELETE /emails/:id (Permanent Delete)
+    return api.delete(`/emails/${id}`);
   },
 };
