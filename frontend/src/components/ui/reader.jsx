@@ -1,62 +1,32 @@
 // components/email/reader.jsx
 "use client";
 import React, { useMemo, useState, useRef, useEffect } from 'react';
-import { Archive, Trash2, Clock, Reply, RotateCcw, XCircle, Forward, ChevronDown, Inbox, Paperclip, Download, Keyboard, Tag } from 'lucide-react';
+import { Archive, Trash2, Clock, Reply, RotateCcw, XCircle, Forward, ChevronDown, Inbox as InboxIcon, Paperclip, Download, Keyboard, Tag, Loader2 } from 'lucide-react';
 import { IconButton, KeyboardShortcut } from '../email/actions';
 import { AISummary } from '../email/ai-summary';
-// Import the Badge component with a different name to avoid conflict with the Tag icon
 import { Tag as EmailBadge } from '../email/badges';
 
-// components/ui/reader.jsx
-
+// ... (Keep SnoozeDropdown and LabelDropdown exactly as they are) ...
 function SnoozeDropdown({ onSnooze }) {
     const [isOpen, setIsOpen] = useState(false);
     const [showCustomInput, setShowCustomInput] = useState(false);
     const [customDate, setCustomDate] = useState("");
 
     const options = [
-        {
-            label: 'Test (20 seconds)',
-            getTime: () => new Date(Date.now() + 20 * 1000)
-        },
-        {
-            label: 'Later Today (3 hours)',
-            getTime: () => new Date(Date.now() + 3 * 60 * 60 * 1000)
-        },
-        {
-            label: 'Tomorrow Morning',
-            getTime: () => {
-                const d = new Date();
-                d.setDate(d.getDate() + 1);
-                d.setHours(9, 0, 0, 0);
-                return d;
-            }
-        },
-        {
-            label: 'Next Week',
-            getTime: () => {
-                const d = new Date();
-                d.setDate(d.getDate() + 7);
-                d.setHours(9, 0, 0, 0);
-                return d;
-            }
-        },
+        { label: 'Test (20 seconds)', getTime: () => new Date(Date.now() + 20 * 1000) },
+        { label: 'Later Today (3 hours)', getTime: () => new Date(Date.now() + 3 * 60 * 60 * 1000) },
+        { label: 'Tomorrow Morning', getTime: () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d; } },
+        { label: 'Next Week', getTime: () => { const d = new Date(); d.setDate(d.getDate() + 7); d.setHours(9, 0, 0, 0); return d; } },
     ];
 
     const handleCustomSubmit = (e) => {
         e.preventDefault();
         if (!customDate) return;
-
         const date = new Date(customDate);
-        if (isNaN(date.getTime())) {
-            alert("Invalid date format");
+        if (isNaN(date.getTime()) || date <= new Date()) {
+            alert("Please select a valid future date");
             return;
         }
-        if (date <= new Date()) {
-            alert("Please select a future date/time");
-            return;
-        }
-
         onSnooze(date);
         setIsOpen(false);
         setShowCustomInput(false);
@@ -64,61 +34,31 @@ function SnoozeDropdown({ onSnooze }) {
 
     return (
         <div className="relative">
-            <button
-                onClick={() => { setIsOpen(!isOpen); setShowCustomInput(false); }}
-                className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
-                title="Snooze"
-            >
+            <button onClick={() => { setIsOpen(!isOpen); setShowCustomInput(false); }} className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors" title="Snooze">
                 <Clock size={18} />
             </button>
-
             {isOpen && (
                 <>
                     <div className="fixed inset-0 z-10" onClick={() => setIsOpen(false)} />
                     <div className="absolute left-0 top-full mt-2 w-56 bg-[#141416] border border-zinc-800 rounded-lg shadow-xl z-20 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
                         <div className="px-3 py-2 text-xs font-semibold text-zinc-500 border-b border-zinc-800">Snooze until...</div>
-
                         {!showCustomInput ? (
                             <>
                                 {options.map((opt, i) => (
-                                    <button
-                                        key={i}
-                                        onClick={() => { onSnooze(opt.getTime()); setIsOpen(false); }}
-                                        className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-indigo-400 transition-colors border-b border-zinc-800/50 last:border-0"
-                                    >
+                                    <button key={i} onClick={() => { onSnooze(opt.getTime()); setIsOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-indigo-400 transition-colors border-b border-zinc-800/50 last:border-0">
                                         {opt.label}
                                     </button>
                                 ))}
-                                <button
-                                    onClick={() => setShowCustomInput(true)}
-                                    className="w-full text-left px-4 py-2 text-sm text-indigo-400 hover:bg-zinc-800 font-medium transition-colors"
-                                >
+                                <button onClick={() => setShowCustomInput(true)} className="w-full text-left px-4 py-2 text-sm text-indigo-400 hover:bg-zinc-800 font-medium transition-colors">
                                     Pick Date & Time...
                                 </button>
                             </>
                         ) : (
                             <div className="p-3">
-                                <input
-                                    type="datetime-local"
-                                    className="w-full bg-zinc-900 border border-zinc-700 rounded text-xs text-white p-2 mb-2 outline-none focus:border-indigo-500"
-                                    value={customDate}
-                                    onChange={(e) => setCustomDate(e.target.value)}
-                                    // Set min to current time formatted for input
-                                    min={new Date().toISOString().slice(0, 16)}
-                                />
+                                <input type="datetime-local" className="w-full bg-zinc-900 border border-zinc-700 rounded text-xs text-white p-2 mb-2 outline-none focus:border-indigo-500" value={customDate} onChange={(e) => setCustomDate(e.target.value)} min={new Date().toISOString().slice(0, 16)} />
                                 <div className="flex gap-2">
-                                    <button
-                                        onClick={() => setShowCustomInput(false)}
-                                        className="flex-1 px-2 py-1.5 text-xs text-zinc-400 hover:text-white bg-zinc-800 hover:bg-zinc-700 rounded"
-                                    >
-                                        Back
-                                    </button>
-                                    <button
-                                        onClick={handleCustomSubmit}
-                                        className="flex-1 px-2 py-1.5 text-xs text-white bg-indigo-600 hover:bg-indigo-500 rounded font-medium"
-                                    >
-                                        Save
-                                    </button>
+                                    <button onClick={() => setShowCustomInput(false)} className="flex-1 px-2 py-1.5 text-xs text-zinc-400 hover:text-white bg-zinc-800 hover:bg-zinc-700 rounded">Back</button>
+                                    <button onClick={handleCustomSubmit} className="flex-1 px-2 py-1.5 text-xs text-white bg-indigo-600 hover:bg-indigo-500 rounded font-medium">Save</button>
                                 </div>
                             </div>
                         )}
@@ -140,31 +80,16 @@ function LabelDropdown({ currentLabel, onSelect }) {
 
     return (
         <div className="relative">
-            <button
-                onClick={(e) => {
-                    e.stopPropagation();
-                    setIsOpen(!isOpen);
-                }}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 transition-colors text-xs font-medium text-zinc-300 border border-zinc-700"
-            >
+            <button onClick={(e) => { e.stopPropagation(); setIsOpen(!isOpen); }} className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 transition-colors text-xs font-medium text-zinc-300 border border-zinc-700">
                 <Tag size={14} />
                 {currentLabel || 'Label'}
             </button>
-
             {isOpen && (
                 <>
                     <div className="fixed inset-0 z-10" onClick={() => setIsOpen(false)} />
                     <div className="absolute right-0 top-full mt-2 w-32 bg-[#141416] border border-zinc-800 rounded-lg shadow-xl z-20 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
                         {labels.map((l) => (
-                            <button
-                                key={l.name}
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    onSelect(l.name);
-                                    setIsOpen(false);
-                                }}
-                                className="w-full text-left px-4 py-2 text-xs text-zinc-300 hover:bg-zinc-800 flex items-center gap-2"
-                            >
+                            <button key={l.name} onClick={(e) => { e.stopPropagation(); onSelect(l.name); setIsOpen(false); }} className="w-full text-left px-4 py-2 text-xs text-zinc-300 hover:bg-zinc-800 flex items-center gap-2">
                                 <div className={`w-2 h-2 rounded-full ${l.color}`} />
                                 {l.name}
                             </button>
@@ -176,7 +101,7 @@ function LabelDropdown({ currentLabel, onSelect }) {
     );
 }
 
-// --- 2. MAIN COMPONENT ---
+// --- MAIN COMPONENT ---
 export default function ReadingPane({
     email,
     totalCount,
@@ -187,11 +112,17 @@ export default function ReadingPane({
     onOpenShortcuts,
     onLabelChange
 }) {
-    const [iframeHeight, setIframeHeight] = useState(600);
+    // Increased default height slightly so it doesn't look "broken" while loading
+    const [iframeHeight, setIframeHeight] = useState(350);
+    // New State: To handle the "Fade In"
+    const [isIframeLoaded, setIsIframeLoaded] = useState(false);
+
     const iframeRef = useRef(null);
 
+    // Reset when email changes
     useEffect(() => {
-        setIframeHeight(600);
+        setIframeHeight(350);
+        setIsIframeLoaded(false); // Hide content immediately
     }, [email?.id]);
 
     const safeSrcDoc = useMemo(() => {
@@ -208,8 +139,9 @@ export default function ReadingPane({
             margin: 0; 
             padding: 24px; 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            color: ${email.folder === 'sent' || email.folder === 'drafts' ? '#ffffff' : '#09090b'};
-            background-color: ${email.folder === 'sent' || email.folder === 'drafts' ? '#09090b' : '#ffffff'};
+            /* FIX 1: Use transparent bg for sent/drafts so it matches the parent div exactly */
+            color: ${email.folder === 'sent' || email.folder === 'drafts' ? '#e4e4e7' : '#09090b'}; 
+            background-color: ${email.folder === 'sent' || email.folder === 'drafts' ? 'transparent' : '#ffffff'};
             overflow: hidden; cursor: text; line-height: 1.6;
           }
           a { color: #2563eb; text-decoration: none; } 
@@ -225,9 +157,10 @@ export default function ReadingPane({
 
     const handleIframeLoad = (e) => {
         const iframe = e.target;
-        if (iframe.contentWindow) {
-            const contentHeight = iframe.contentWindow.document.documentElement.scrollHeight;
-            setIframeHeight(contentHeight + 20);
+        if (iframe.contentWindow && iframe.contentWindow.document.body) {
+            const bodyHeight = iframe.contentWindow.document.body.scrollHeight;
+            setIframeHeight(bodyHeight + 30);
+            setIsIframeLoaded(true); // Reveal content only after height is set
         }
     };
 
@@ -235,7 +168,7 @@ export default function ReadingPane({
         return (
             <div className="flex-1 flex flex-col items-center justify-center text-zinc-500 bg-[#09090b]">
                 <div className="w-20 h-20 bg-zinc-900/50 rounded-full flex items-center justify-center mb-4">
-                    <Inbox size={40} className="text-zinc-700" strokeWidth={1} />
+                    <InboxIcon size={40} className="text-zinc-700" strokeWidth={1} />
                 </div>
                 <p>No message selected</p>
             </div>
@@ -256,52 +189,30 @@ export default function ReadingPane({
             <div className="h-14 flex-shrink-0 flex items-center justify-between px-6 border-b border-zinc-900/50 bg-black/20 backdrop-blur-md z-20">
                 <div className="flex gap-1">
                     {isTrash ? (
-                        /* TRASH MODE: Restore + Delete Forever */
                         <>
-                            <IconButton
-                                icon={RotateCcw}
-                                label="Restore to Inbox"
-                                onClick={() => onAction('restore', email.id)}
-                            />
-                            <IconButton
-                                icon={XCircle}
-                                label="Delete Forever"
-                                color="text-red-400 hover:bg-red-500/10"
-                                onClick={() => onAction('delete', email.id)}
-                            />
+                            <IconButton icon={RotateCcw} label="Restore to Inbox" onClick={() => onAction('restore', email.id)} />
+                            <IconButton icon={XCircle} label="Delete Forever" color="text-red-400 hover:bg-red-500/10" onClick={() => onAction('delete', email.id)} />
                         </>
                     ) : (
-                        /* NORMAL MODE: Archive + Trash + Snooze */
                         <>
                             {isArchived ? (
                                 <IconButton icon={InboxIcon} label="Move to Inbox" onClick={() => onAction('unarchive', email.id)} />
                             ) : (
                                 <IconButton icon={Archive} label="Archive (E)" shortcut="E" onClick={() => onAction('archive', email.id)} />
                             )}
-
                             <IconButton icon={Trash2} label="Delete (#)" shortcut="#" onClick={() => onAction('delete', email.id)} />
-
                             <div className="w-px h-4 bg-zinc-800 mx-2"></div>
                             <SnoozeDropdown onSnooze={(date) => onAction('snooze', email.id, date)} />
                         </>
                     )}
-
                     <IconButton icon={Keyboard} label="Shortcuts" onClick={() => onOpenShortcuts()} />
                     <div className="w-px h-6 bg-zinc-800 mx-2 self-center"></div>
                     <IconButton icon={Reply} label="Reply (R)" shortcut="R" onClick={() => onReply(email)} />
-                    <IconButton
-                        icon={Forward}
-                        label="Forward"
-                        onClick={() => onAction('forward', email.id)}
-                    />
+                    <IconButton icon={Forward} label="Forward" onClick={() => onAction('forward', email.id)} />
                 </div>
 
                 <div className="flex items-center gap-3 text-zinc-500 text-sm">
-                    {/* DROPDOWN IN HEADER */}
-                    <LabelDropdown
-                        currentLabel={email.tag}
-                        onSelect={(newLabel) => onLabelChange(email.id, newLabel)}
-                    />
+                    <LabelDropdown currentLabel={email.tag} onSelect={(newLabel) => onLabelChange(email.id, newLabel)} />
                     <span className="hidden lg:inline">{currentIndex + 1} of {totalCount}</span>
                     <div className="flex bg-zinc-900/50 rounded-lg p-0.5">
                         <button onClick={() => onNavigate('prev')} className="p-1.5 hover:bg-zinc-800 rounded-md transition-colors disabled:opacity-30" disabled={currentIndex === 0}><ChevronDown className="rotate-180" size={16} /></button>
@@ -320,7 +231,6 @@ export default function ReadingPane({
                             <h1 className="text-2xl font-bold text-zinc-100 leading-tight">
                                 {email.subject}
                             </h1>
-                            {/* --- RESTORED TAG HERE --- */}
                             <div className="flex gap-2 flex-shrink-0 ml-4">
                                 <EmailBadge label={email.tag} color={email.tagColor} />
                             </div>
@@ -349,14 +259,21 @@ export default function ReadingPane({
 
                         <AISummary emailId={email.id} />
 
-                        {/* EMAIL CONTENT */}
-                        <div className={`w-full ${email.folder === 'sent' || email.folder === 'drafts' ? 'bg-zinc-800/50' : 'bg-white'} rounded-lg border border-zinc-800/50 mt-6`}>
+                        {/* EMAIL CONTENT with Fade-In Effect */}
+                        <div className={`w-full ${email.folder === 'sent' || email.folder === 'drafts' ? 'bg-zinc-950' : 'bg-white'} rounded-lg border border-zinc-800/50 mt-6 min-h-[200px] relative transition-all duration-300`}>
+                            {/* Loading Spinner (Visible while calculating height) */}
+                            {!isIframeLoaded && (
+                                <div className="absolute inset-0 flex items-center justify-center">
+                                    <Loader2 className="w-6 h-6 text-indigo-500/50 animate-spin" />
+                                </div>
+                            )}
+
                             <iframe
                                 ref={iframeRef}
                                 srcDoc={safeSrcDoc}
                                 onLoad={handleIframeLoad}
                                 style={{ height: `${iframeHeight}px`, overflow: 'hidden' }}
-                                className="w-full border-0 block transition-all duration-300 ease-out"
+                                className={`w-full border-0 block transition-opacity duration-500 ease-in-out ${isIframeLoaded ? 'opacity-100' : 'opacity-0'}`}
                                 title="Email Content"
                                 sandbox="allow-same-origin allow-popups"
                                 scrolling="no"

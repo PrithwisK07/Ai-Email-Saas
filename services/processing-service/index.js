@@ -42,7 +42,7 @@ async function main() {
 
         try {
           const emailData = JSON.parse(msg.content.toString());
-          const { tenant_id } = emailData;
+          const { tenant_id, attachments } = emailData;
 
           // 1. Check DB for Duplicates (Idempotency)
           const dbClient = await dbPool.connect();
@@ -59,7 +59,11 @@ async function main() {
             } else {
               // 2. Insert IMMEDIATELY (Skip AI)
               // We default intent to 'none' or 'new' to be processed later if needed
-              const aiMetadata = { intent: "none", status: "unprocessed" };
+              const aiMetadata = {
+                intent: "none",
+                status: "unprocessed",
+                attachments: attachments || [],
+              };
 
               const insertRes = await dbClient.query(
                 `INSERT INTO emails (thread_id, internal_message_id, subject, sender, recipients, body_text, body_html, sent_at, tenant_id, ai_metadata)
