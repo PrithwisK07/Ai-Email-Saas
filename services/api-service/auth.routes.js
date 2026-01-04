@@ -156,11 +156,16 @@ function createAuthRouter(pgPool, genAI) {
       const userId = req.user.id;
 
       const result = await pgPool.query(
-        "SELECT settings FROM users WHERE user_id = $1",
+        "SELECT name, settings FROM users WHERE user_id = $1",
         [userId]
       );
-      console.log("settings opened");
-      res.json(result.rows[0]?.settings || {});
+
+      const row = result.rows[0];
+      console.log("erq");
+      res.json({
+        name: row?.name || "",
+        ...(row?.settings || {}),
+      });
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: "Failed to fetch settings" });
@@ -169,15 +174,39 @@ function createAuthRouter(pgPool, genAI) {
 
   // [PATCH] /settings
   router.patch("/settings", authenticateToken, async (req, res) => {
-    const newSettings = req.body;
-    try {
-      // FIX: Access 'req.user.user.id' here too
-      const userId = req.user.id;
+    const { name, ...jsonSettings } = req.body;
+    const userId = req.user.id;
+    if (!userId) return res.status(401).json({ error: "Invalid Token" });
 
-      await pgPool.query(
-        "UPDATE users SET settings = COALESCE(settings, '{}'::jsonb) || $1 WHERE user_id = $2",
-        [JSON.stringify(newSettings), userId]
-      );
+    try {
+      const client = await pgPool.connect();
+      try {
+        await client.query("BEGIN");
+
+        // 1. Update Name (if provided)
+        if (name) {
+          await client.query("UPDATE users SET name = $1 WHERE user_id = $2", [
+            name,
+            userId,
+          ]);
+        }
+
+        // 2. Update JSON Settings (if provided)
+        if (Object.keys(jsonSettings).length > 0) {
+          await client.query(
+            "UPDATE users SET settings = COALESCE(settings, '{}'::jsonb) || $1::jsonb WHERE user_id = $2",
+            [JSON.stringify(jsonSettings), userId]
+          );
+        }
+
+        await client.query("COMMIT");
+        res.json({ success: true });
+      } catch (e) {
+        await client.query("ROLLBACK");
+        throw e;
+      } finally {
+        client.release();
+      }
       console.log("settings updated", newSettings);
       res.json({ success: true });
     } catch (err) {

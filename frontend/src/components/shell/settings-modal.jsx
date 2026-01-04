@@ -5,21 +5,24 @@ import { AuthService } from '@/lib/endpoints';
 import { toast } from '@/components/ui/toast'; // <--- Import Toast
 
 export default function SettingsModal({ onClose }) {
+    const [name, setName] = useState("");
     const [signature, setSignature] = useState("");
     const [retention, setRetention] = useState("30");
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
 
-    // 1. Fetch Settings on Mount
     useEffect(() => {
         async function load() {
             try {
                 const data = await AuthService.getSettings();
+                if (data.name) setName(data.name);
                 if (data.signature) setSignature(data.signature);
                 if (data.trash_retention_days) setRetention(String(data.trash_retention_days));
+
+                console.log(data);
             } catch (e) {
-                console.error("Failed to load settings", e);
-                toast.error("Could not load your settings.");
+                console.error(e);
+                toast.error("Could not load settings");
             } finally {
                 setLoading(false);
             }
@@ -32,24 +35,27 @@ export default function SettingsModal({ onClose }) {
         setSaving(true);
         try {
             await AuthService.updateSettings({
+                name: name, // <--- Send Name
                 signature: signature,
                 trash_retention_days: retention
             });
 
-            // Update local storage for immediate access in Compose
+            // Update LocalStorage so Sidebar updates immediately without refresh
+            localStorage.setItem("zenith_user_name", name);
             localStorage.setItem("zenith_signature", signature);
 
-            toast.success("Settings saved successfully!"); // <--- Success Toast
+            toast.success("Saved!");
             onClose();
+
+            // Optional: Force a reload or trigger an event to update Sidebar
+            window.dispatchEvent(new Event("storage"));
         } catch (e) {
-            console.error("Failed to save", e);
-            toast.error("Failed to save settings. Please try again."); // <--- Error Toast
+            console.error(e);
+            toast.error("Failed to save");
         } finally {
             setSaving(false);
         }
     };
-
-    if (loading) return null;
 
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in">
@@ -63,6 +69,18 @@ export default function SettingsModal({ onClose }) {
                 </div>
 
                 <div className="p-6 space-y-6">
+                    <div>
+                        <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider block mb-2">Display Name</label>
+                        <input
+                            type="text"
+                            value={name}
+                            onChange={(e) => setName(e.target.value)}
+                            placeholder="e.g. John Doe"
+                            className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-3 text-sm text-zinc-200 outline-none focus:border-indigo-500 transition-colors"
+                        />
+                        <p className="text-xs text-zinc-500 mt-2">This name will appear in your sidebar and sent emails.</p>
+                    </div>
+
                     {/* Signature */}
                     <div>
                         <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider block mb-2">Email Signature</label>

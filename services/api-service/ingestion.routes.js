@@ -8,46 +8,74 @@ const { convert } = require("html-to-text");
 const RABBITMQ_URL = process.env.RABBITMQ_URL || "amqp://localhost:5672";
 const QUEUE_NAME = "email_processing_queue";
 
+function formatImapDate(date) {
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+  });
+}
+
 // This function receives the db pool and returns a new router
 function createIngestionRouter(pgPool) {
   const router = express.Router();
 
-  /**
-   * [POST] /ingestion/sync
-   * Fetches emails for the authenticated user and publishes them to the queue
-   * with a tenant_id.
-   */
   router.post("/sync", async (req, res) => {
-    // We get these from the authenticateToken middleware
-    const { tenant_id, user_id } = req.user;
+    // Fix: Robust ID extraction
+    const user_id = req.user.id;
+    const tenant_id = req.user.user?.tenant_id || req.user.tenant_id;
 
-    console.log(`[+] Starting sync for Tenant: ${tenant_id}, User: ${user_id}`);
+    console.log(`[+] Starting INCREMENTAL sync for User: ${user_id}`);
 
-    // --- TODO: This is our last "cheat" ---
-    // In a real app, we would query the 'email_accounts' table
-    // using the 'user_id' to get the encrypted credentials.
-    // For this test, we'll use the same hardcoded values.
+    // --- 1. DETERMINE SYNC DATE ---
+    let searchDateStr;
+    try {
+      const userRes = await pgPool.query(
+        "SELECT last_synced_at FROM users WHERE user_id = $1",
+        [user_id]
+      );
+
+      const lastSync = userRes.rows[0]?.last_synced_at;
+      let sinceDate;
+
+      if (lastSync) {
+        sinceDate = new Date(lastSync);
+        sinceDate.setDate(sinceDate.getDate() - 1);
+        console.log(
+          `[📅] Memory found. Syncing since: ${sinceDate.toISOString()}`
+        );
+      } else {
+        sinceDate = new Date("2025-12-28"); // Default start
+        console.log(
+          `[📅] First sync. Defaulting to: ${sinceDate.toISOString()}`
+        );
+      }
+
+      searchDateStr = formatImapDate(sinceDate);
+    } catch (dbErr) {
+      console.error("DB Error fetching sync date:", dbErr);
+      return res.status(500).json({ error: "Database error" });
+    }
+
     const imapConfig = {
       user: "karmakarprithwis566@gmail.com",
       password: "hypc tmqc vmcb zmlx",
       host: "imap.gmail.com",
       port: 993,
       tls: true,
-      authTimeout: 5000,
+      authTimeout: 10000,
       tlsOptions: { rejectUnauthorized: false },
     };
-    // --- End of TODO ---
 
     let connection;
     let channel;
+
     try {
-      // --- 1. Connect to RabbitMQ ---
       console.log("Connecting to RabbitMQ...");
       connection = await amqp.connect(RABBITMQ_URL);
       channel = await connection.createChannel();
       await channel.assertQueue(QUEUE_NAME, { durable: true });
 
-      // --- 2. Fetch Emails (IMAP Logic) ---
       const parsedEmails = await new Promise((resolve, reject) => {
         const imap = new Imap(imapConfig);
         const allParsedEmails = [];
@@ -61,12 +89,22 @@ function createIngestionRouter(pgPool) {
             if (err)
               return reject(new Error("Error opening INBOX: " + err.message));
 
-            imap.search(["ALL", ["SINCE", "Dec 31, 2025"]], (err, results) => {
-              if (err || !results || results.length === 0) {
+            console.log(
+              `[🔎] Searching IMAP for emails SINCE ${searchDateStr}...`
+            );
+
+            imap.search(["ALL", ["SINCE", searchDateStr]], (err, results) => {
+              if (err) {
+                imap.end();
+                return reject(err);
+              }
+              if (!results || results.length === 0) {
+                console.log("[ℹ️] No new emails found since " + searchDateStr);
                 imap.end();
                 return resolve([]);
               }
 
+              console.log(`[🔎] Found ${results.length} raw messages.`);
               const f = imap.fetch(results, { bodies: "" });
 
               f.on("message", (msg, seqno) => {
@@ -78,21 +116,27 @@ function createIngestionRouter(pgPool) {
                 msg.on("body", (stream) => {
                   simpleParser(stream, (err, parsed) => {
                     if (!err && messageUID) {
-                      // --- NEW DATA CLEANING LOGIC ---
-                      let cleanText = parsed.text; // Use .text as a fallback
-
+                      let cleanText = parsed.text;
                       if (parsed.html) {
-                        // If HTML is available, it's a better source of truth.
-                        // Convert it to clean, readable plain text.
                         cleanText = convert(parsed.html, {
-                          wordwrap: 130, // null to disable, 130 is a good default
-                          // This ignores links, which are often noisy in emails
+                          wordwrap: 130,
                           selectors: [
                             { selector: "a", options: { ignoreHref: true } },
                           ],
                         });
                       }
-                      // --- END NEW LOGIC ---
+
+                      // --- 👇 FIX: EXTRACT ATTACHMENTS 👇 ---
+                      const attachments = parsed.attachments
+                        ? parsed.attachments.map((att) => ({
+                            filename: att.filename,
+                            contentType: att.contentType,
+                            size: att.size,
+                            // Convert Buffer to Base64 for JSON storage
+                            content: att.content.toString("base64"),
+                            encoding: "base64",
+                          }))
+                        : [];
 
                       allParsedEmails.push({
                         tenant_id: tenant_id,
@@ -104,6 +148,7 @@ function createIngestionRouter(pgPool) {
                         date: parsed.date,
                         textBody: cleanText,
                         htmlBody: parsed.html,
+                        attachments: attachments, // <--- Add to payload
                       });
                     }
                   });
@@ -127,33 +172,33 @@ function createIngestionRouter(pgPool) {
         imap.connect();
       });
 
-      if (parsedEmails.length === 0) {
-        return res.json({ message: "No new emails to sync." });
+      if (parsedEmails.length > 0) {
+        console.log(`[🚀] Publishing ${parsedEmails.length} emails...`);
+        parsedEmails.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+        for (const email of parsedEmails) {
+          const msgBuffer = Buffer.from(JSON.stringify(email));
+          channel.sendToQueue(QUEUE_NAME, msgBuffer, { persistent: true });
+        }
       }
 
-      // --- 3. Publish to Queue (Now with tenant_id) ---
-      console.log(
-        `[🚀] Publishing ${parsedEmails.length} emails for tenant ${tenant_id}...`
+      await pgPool.query(
+        "UPDATE users SET last_synced_at = NOW() WHERE user_id = $1",
+        [user_id]
       );
-
-      parsedEmails.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-      for (const email of parsedEmails) {
-        const msgBuffer = Buffer.from(JSON.stringify(email));
-        channel.sendToQueue(QUEUE_NAME, msgBuffer, { persistent: true });
-      }
+      console.log(`[💾] Memory updated.`);
 
       res.json({
-        message: `Successfully queued ${parsedEmails.length} new emails.`,
-        emails: parsedEmails,
+        message: `Sync complete. Queued ${parsedEmails.length} new emails.`,
+        count: parsedEmails.length,
+        since: searchDateStr,
       });
     } catch (error) {
-      console.error("An error occurred during sync:", error.message);
-      res.status(500).send("An error occurred during sync: " + error.message);
+      console.error("Sync Error:", error.message);
+      res.status(500).send("Sync failed: " + error.message);
     } finally {
       if (channel) await channel.close();
       if (connection) await connection.close();
-      console.log("RabbitMQ connection closed.");
     }
   });
 

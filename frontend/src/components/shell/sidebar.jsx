@@ -1,6 +1,6 @@
 // components/shell/sidebar.jsx
 "use client";
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     Inbox, Star, Send, FileText, Keyboard, Archive, Trash2,
     Plus, Settings, LogOut, ChevronUp, Loader2, RefreshCw,
@@ -22,6 +22,22 @@ export default function Sidebar({
     onOpenShortcuts
 }) {
     const [profileOpen, setProfileOpen] = useState(false);
+    const [userName, setUserName] = useState("User");
+
+    useEffect(() => {
+        // 1. Initial Load
+        const storedName = localStorage.getItem("zenith_user_name");
+        if (storedName) setUserName(storedName);
+
+        // 2. Listen for changes (so it updates when you save settings)
+        const handleStorageChange = () => {
+            const newName = localStorage.getItem("zenith_user_name");
+            if (newName) setUserName(newName);
+        };
+
+        window.addEventListener("storage", handleStorageChange);
+        return () => window.removeEventListener("storage", handleStorageChange);
+    }, []);
 
     const menuItems = [
         { id: 'inbox', icon: Inbox, label: 'Inbox', count: counts.inbox || 0 },
@@ -187,13 +203,12 @@ export default function Sidebar({
                         className={`w-full flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-zinc-800/50 transition-colors group ${!isOpen && 'justify-center'}`}
                     >
                         <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-xs font-bold text-white shadow-lg shadow-indigo-500/20 flex-shrink-0">
-                            JD
+                            {userName.charAt(0).toUpperCase()}
                         </div>
                         {isOpen && (
                             <>
                                 <div className="flex-1 min-w-0 text-left animate-in fade-in duration-300">
-                                    <p className="text-sm font-medium text-zinc-200 truncate group-hover:text-white">John Doe</p>
-                                    <p className="text-xs text-zinc-500 truncate">Pro Plan</p>
+                                    <p className="text-sm font-medium text-zinc-200 truncate group-hover:text-white">{userName}</p>
                                 </div>
                                 <ChevronUp size={14} className={`text-zinc-600 transition-transform flex-shrink-0 ${profileOpen ? 'rotate-180' : ''}`} />
                             </>

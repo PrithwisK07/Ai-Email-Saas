@@ -54,6 +54,7 @@ function createSendRouter(pgPool) {
         to: cleanTo, // <--- Saving this so we can display it later
         cc: cleanCc,
         bcc: cleanBcc,
+        attachments: attachments,
       });
 
       if (pgPool) {
@@ -68,7 +69,7 @@ function createSendRouter(pgPool) {
             html,
             new Date(),
             tenant_id,
-            meta, // <--- Saving the full metadata now
+            meta,
           ]
         );
       }

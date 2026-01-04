@@ -49,6 +49,17 @@ function createEmailActionsRouter(pgPool, weaviateClient) {
     const { tenant_id } = req.user;
 
     try {
+      const checkRes = await pgPool.query(
+        "SELECT status FROM emails WHERE email_id = $1 AND tenant_id = $2",
+        [id, tenant_id]
+      );
+
+      if (checkRes.rows.length === 0) {
+        return res.status(404).json({ error: "Email not found" });
+      }
+
+      const previousStatus = checkRes.rows[0].status;
+
       await pgPool.query(
         "UPDATE emails SET status = $1 WHERE email_id = $2 AND tenant_id = $3",
         [status, id, tenant_id]
@@ -61,7 +72,10 @@ function createEmailActionsRouter(pgPool, weaviateClient) {
         await collection.data.deleteMany(
           collection.filter.byProperty("email_id").equal(id)
         );
-      } else if (status === "inbox" || status === "archive") {
+      } else if (
+        (status === "inbox" || status === "archive") &&
+        previousStatus === "trash"
+      ) {
         const emailRes = await pgPool.query(
           "SELECT subject, sender, body_text FROM emails WHERE email_id = $1",
           [id]
