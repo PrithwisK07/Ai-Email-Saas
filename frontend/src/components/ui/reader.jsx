@@ -1,7 +1,7 @@
 // components/email/reader.jsx
 "use client";
 import React, { useMemo, useState, useRef, useEffect } from 'react';
-import { Archive, Trash2, Clock, Reply, ReplyAll, Forward, ChevronDown, Inbox, Paperclip, Download, Keyboard, Tag } from 'lucide-react';
+import { Archive, Trash2, Clock, Reply, RotateCcw, XCircle, Forward, ChevronDown, Inbox, Paperclip, Download, Keyboard, Tag } from 'lucide-react';
 import { IconButton, KeyboardShortcut } from '../email/actions';
 import { AISummary } from '../email/ai-summary';
 // Import the Badge component with a different name to avoid conflict with the Tag icon
@@ -243,6 +243,7 @@ export default function ReadingPane({
     }
 
     const isArchived = email.folder === 'archive';
+    const isTrash = email.folder === 'trash';
 
     return (
         <div className="flex-1 flex flex-col bg-[#09090b] relative z-0 min-w-0 h-full">
@@ -254,13 +255,37 @@ export default function ReadingPane({
             {/* HEADER */}
             <div className="h-14 flex-shrink-0 flex items-center justify-between px-6 border-b border-zinc-900/50 bg-black/20 backdrop-blur-md z-20">
                 <div className="flex gap-1">
-                    {isArchived ? (
-                        <IconButton icon={Inbox} label="Move to Inbox" onClick={() => onAction('unarchive', email.id)} />
+                    {isTrash ? (
+                        /* TRASH MODE: Restore + Delete Forever */
+                        <>
+                            <IconButton
+                                icon={RotateCcw}
+                                label="Restore to Inbox"
+                                onClick={() => onAction('restore', email.id)}
+                            />
+                            <IconButton
+                                icon={XCircle}
+                                label="Delete Forever"
+                                color="text-red-400 hover:bg-red-500/10"
+                                onClick={() => onAction('delete', email.id)}
+                            />
+                        </>
                     ) : (
-                        <IconButton icon={Archive} label="Archive (E)" shortcut="E" onClick={() => onAction('archive', email.id)} />
+                        /* NORMAL MODE: Archive + Trash + Snooze */
+                        <>
+                            {isArchived ? (
+                                <IconButton icon={InboxIcon} label="Move to Inbox" onClick={() => onAction('unarchive', email.id)} />
+                            ) : (
+                                <IconButton icon={Archive} label="Archive (E)" shortcut="E" onClick={() => onAction('archive', email.id)} />
+                            )}
+
+                            <IconButton icon={Trash2} label="Delete (#)" shortcut="#" onClick={() => onAction('delete', email.id)} />
+
+                            <div className="w-px h-4 bg-zinc-800 mx-2"></div>
+                            <SnoozeDropdown onSnooze={(date) => onAction('snooze', email.id, date)} />
+                        </>
                     )}
-                    <IconButton icon={Trash2} label="Delete (#)" shortcut="#" onClick={() => onAction('delete', email.id)} />
-                    <SnoozeDropdown onSnooze={(date) => onAction('snooze', email.id, date)} />
+
                     <IconButton icon={Keyboard} label="Shortcuts" onClick={() => onOpenShortcuts()} />
                     <div className="w-px h-6 bg-zinc-800 mx-2 self-center"></div>
                     <IconButton icon={Reply} label="Reply (R)" shortcut="R" onClick={() => onReply(email)} />

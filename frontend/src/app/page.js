@@ -1,7 +1,7 @@
 // app/page.jsx
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import Sidebar from "@/components/shell/sidebar";
 import EmailList from "@/components/ui/list";
 import ReadingPane from "@/components/ui/reader";
@@ -276,7 +276,7 @@ export default function MailWiseMailPage() {
   const filteredEmails = emails.filter((email) => {
     if (showUnreadOnly && email.read) return false;
     if (activeTab === "starred") return email.isStarred;
-    const isLabel = ["Meeting", "Task", "Call", "General"].includes(activeTab);
+    const isLabel = ["Meeting", "Task", "Info", "General"].includes(activeTab);
     if (isLabel) return email.tag === activeTab;
     return email.folder === activeTab;
   });
@@ -319,23 +319,26 @@ export default function MailWiseMailPage() {
     }
   };
 
-  const handleArchive = async (id) => {
-    // 1. Optimistic Update (Remove from current view immediately)
-    // Note: If we are in "Archive" tab, this might look weird, but usually you don't archive from archive.
-    setEmails((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, folder: "archive" } : e))
-    );
-    if (selectedEmailId === id) setSelectedEmailId(null);
+  const handleArchive = useCallback(
+    async (id) => {
+      // 1. Optimistic Update (Remove from current view immediately)
+      // Note: If we are in "Archive" tab, this might look weird, but usually you don't archive from archive.
+      setEmails((prev) =>
+        prev.map((e) => (e.id === id ? { ...e, folder: "archive" } : e))
+      );
+      if (selectedEmailId === id) setSelectedEmailId(null);
 
-    // 2. API Call
-    try {
-      await ActionService.updateStatus(id, "archive");
-      toast.success("Archived");
-    } catch (error) {
-      console.error("Failed to archive", error);
-      toast.error("Failed to archive");
-    }
-  };
+      // 2. API Call
+      try {
+        await ActionService.updateStatus(id, "archive");
+        toast.success("Archived");
+      } catch (error) {
+        console.error("Failed to archive", error);
+        toast.error("Failed to archive");
+      }
+    },
+    [selectedEmailId]
+  );
 
   const handleLabelChange = async (id, newLabel) => {
     // Optimistic Update
@@ -365,13 +368,42 @@ export default function MailWiseMailPage() {
     }
   };
 
-  const handleDelete = (id) => {
-    setEmails((prev) =>
-      prev.map((email) =>
-        email.id === id ? { ...email, folder: "trash" } : email
-      )
-    );
+  const handleDelete = useCallback(
+    async (id) => {
+      const email = emails.find((e) => e.id === id);
+      if (!email) return;
+
+      const isTrash = email.folder === "trash";
+
+      setEmails((prev) => prev.filter((e) => e.id !== id));
+      if (selectedEmailId === id) setSelectedEmailId(null);
+
+      try {
+        if (isTrash) {
+          await ActionService.deleteForever(id);
+          toast.success("Deleted forever");
+        } else {
+          await ActionService.updateStatus(id, "trash");
+          toast.success("Moved to trash");
+        }
+      } catch (error) {
+        console.error("Delete failed", error);
+        toast.error("Failed to delete");
+      }
+    },
+    [emails, selectedEmailId]
+  );
+
+  const handleRestore = async (id) => {
+    setEmails((prev) => prev.filter((e) => e.id !== id));
     if (selectedEmailId === id) setSelectedEmailId(null);
+
+    try {
+      await ActionService.updateStatus(id, "inbox");
+      toast.success("Restored to Inbox");
+    } catch (error) {
+      console.error("Restore failed", error);
+    }
   };
 
   const handleSend = async (data) => {
@@ -644,6 +676,7 @@ export default function MailWiseMailPage() {
         onUnarchive={handleUnarchive}
         onArchive={handleArchive}
         onDelete={handleDelete}
+        onRestore={handleRestore}
         onSearchClick={() => setSearchOpen(true)}
         showUnreadOnly={showUnreadOnly}
         onToggleUnread={() => setShowUnreadOnly(!showUnreadOnly)}
@@ -660,6 +693,7 @@ export default function MailWiseMailPage() {
           if (type === "archive") handleArchive(id);
           if (type === "unarchive") handleUnarchive(id);
           if (type === "delete") handleDelete(id);
+          if (type === "restore") handleRestore(id);
           if (type === "reply") handleReply(selectedEmail);
           if (type === "forward") handleForward(selectedEmail);
           if (type === "snooze") handleSnooze(id, data);

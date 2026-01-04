@@ -1,7 +1,7 @@
 // components/email/list.jsx
 "use client";
 import React, { useState } from 'react';
-import { Search, RefreshCw, Filter, MoreVertical, Inbox, Star, Archive, Trash2, Inbox as InboxIcon } from 'lucide-react';
+import { Search, RefreshCw, Filter, MoreVertical, Inbox, Star, Archive, Trash2, RotateCcw, Inbox as InboxIcon } from 'lucide-react';
 import { Tag as EmailTag } from '../email/badges';
 
 export default function EmailList({
@@ -13,6 +13,7 @@ export default function EmailList({
     onUnarchive,
     onArchive,
     onDelete,
+    onRestore,
     onSearchClick,
     showUnreadOnly, onToggleUnread, onRefresh
 }) {
@@ -149,10 +150,10 @@ export default function EmailList({
                                             {email.folder === "archive" ? <InboxIcon size={14} /> : <Archive size={14} />}
                                         </button>
                                         <button
-                                            onClick={(e) => handleAction(e, onDelete, email.id)}
+                                            onClick={(e) => handleAction(e, email.folder === "trash" ? onRestore : onDelete, email.id)}
                                             className="p-1 hover:bg-zinc-700 rounded text-zinc-500 hover:text-zinc-300 transition-colors"
-                                            title="Delete (#)">
-                                            <Trash2 size={14} />
+                                            title={email.folder === "trash" ? "Restore (#)" : "Delete (#)"}>
+                                            {email.folder === "trash" ? <RotateCcw size={14} /> : <Trash2 size={14} />}
                                         </button>
                                     </div>
                                 </div>
