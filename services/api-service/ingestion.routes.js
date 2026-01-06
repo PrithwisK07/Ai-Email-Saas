@@ -116,6 +116,15 @@ function createIngestionRouter(pgPool) {
                 msg.on("body", (stream) => {
                   simpleParser(stream, (err, parsed) => {
                     if (!err && messageUID) {
+                      const isMassMail = parsed.headers.get("x-mailwise-mass"); // http headers case insenitive
+
+                      if (isMassMail) {
+                        console.log(
+                          `[🚫] Skipping Mass Mail echo: ${parsed.subject}`
+                        );
+                        return;
+                      }
+
                       let cleanText = parsed.text;
                       if (parsed.html) {
                         cleanText = convert(parsed.html, {
@@ -248,7 +257,8 @@ function createIngestionRouter(pgPool) {
             is_starred,
             label,
             snooze_until,
-            snoozed_at
+            snoozed_at,
+            is_read
          FROM emails 
          WHERE tenant_id = $1 
          ORDER BY sent_at DESC;`,

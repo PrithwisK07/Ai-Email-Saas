@@ -173,7 +173,7 @@ export default function MailWiseMailPage() {
         acc.push({
           id: email.email_id || email.id,
           sender: displaySender,
-          to: email.recipients || aiData.to,
+          to: email.recipients || aiData.to || aiData.recipients_snapshot,
           email: email.sender,
           subject: email.subject || "(No Subject)",
           preview: (email.body_text || "").substring(0, 120) + "...",
@@ -190,6 +190,7 @@ export default function MailWiseMailPage() {
           read: true,
           tag: tagName,
           tagColor: tagColor,
+          is_read: email.is_read,
           folder: folder,
           isStarred: email.is_starred || false,
           body: email.body_html || `<p>${email.body_text}</p>`,
@@ -274,7 +275,7 @@ export default function MailWiseMailPage() {
   };
 
   const filteredEmails = emails.filter((email) => {
-    if (showUnreadOnly && email.read) return false;
+    if (showUnreadOnly && email.is_read) return false;
     if (activeTab === "starred") return email.isStarred;
     const isLabel = ["Meeting", "Task", "Info", "General"].includes(activeTab);
     if (isLabel) return email.tag === activeTab;
@@ -528,6 +529,22 @@ export default function MailWiseMailPage() {
     }
   };
 
+  const handleReadToggle = async (id, newStatus) => {
+    // 1. Optimistic Update (Update UI immediately)
+    setEmails((prev) =>
+      prev.map((email) =>
+        email.id === id ? { ...email, is_read: newStatus } : email
+      )
+    );
+
+    // 2. Call API
+    try {
+      await ActionService.markRead(id, newStatus);
+    } catch (error) {
+      console.error("Failed to update read status", error);
+    }
+  };
+
   // --- Keyboard ---
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -697,6 +714,7 @@ export default function MailWiseMailPage() {
           if (type === "reply") handleReply(selectedEmail);
           if (type === "forward") handleForward(selectedEmail);
           if (type === "snooze") handleSnooze(id, data);
+          if (type === "toggle_read") handleReadToggle(id, data);
         }}
         onOpenShortcuts={() => setShortcutsOpen(true)}
         onLabelChange={handleLabelChange}

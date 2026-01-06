@@ -175,6 +175,23 @@ function createEmailActionsRouter(pgPool, weaviateClient) {
     }
   });
 
+  router.patch("/:id/read", async (req, res) => {
+    const { id } = req.params;
+    const { is_read } = req.body; // Expects true or false
+    const { tenant_id } = req.user;
+
+    try {
+      await pgPool.query(
+        "UPDATE emails SET is_read = $1 WHERE email_id = $2 AND tenant_id = $3",
+        [is_read, id, tenant_id]
+      );
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Read Status Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   return router;
 }
 

@@ -10,11 +10,11 @@ const startEmailWorker = require("./email.worker");
 const calendarRoutes = require("./calendar.routes");
 const createDraftsRouter = require("./drafts.routes");
 const createEmailActionsRouter = require("./email-actions.routes");
-
 const express = require("express");
 const weaviate = require("weaviate-client");
 const { Pool } = require("pg");
 const cors = require("cors");
+const createContactsRouter = require("./contacts.routes");
 
 // --- Constants ---
 const PORT = 3001;
@@ -74,6 +74,8 @@ async function main() {
       authenticateToken,
       createEmailActionsRouter(pgPool, weaviateClient)
     );
+
+    app.use("/contacts", authenticateToken, createContactsRouter(pgPool));
 
     startEmailWorker();
 

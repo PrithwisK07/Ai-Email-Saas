@@ -103,4 +103,30 @@ export const ActionService = {
     // Calls DELETE /emails/:id (Permanent Delete)
     return api.delete(`/emails/${id}`);
   },
+
+  markRead: async (id, isRead) => {
+    return api.patch(`/emails/${id}/read`, { is_read: isRead });
+  },
+
+  extractEmailsFromFile: async (file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const res = await api.post("/ai/extract-emails", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+    return res.data.emails;
+  },
+
+  sendMassMail: async (payload) => {
+    const res = await api.post("/send/mass", payload);
+    return res.data;
+  },
+};
+
+export const ContactService = {
+  getSuggestions: async () => {
+    const res = await api.get("/contacts/suggestions");
+    return res.data;
+  },
 };

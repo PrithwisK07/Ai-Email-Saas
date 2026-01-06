@@ -1,13 +1,14 @@
 // components/email/reader.jsx
 "use client";
 import React, { useMemo, useState, useRef, useEffect } from 'react';
-import { Archive, Trash2, Clock, Reply, RotateCcw, XCircle, Forward, ChevronDown, Inbox as InboxIcon, Paperclip, Download, Keyboard, Tag, Loader2 } from 'lucide-react';
+import { Archive, Trash2, Clock, Reply, RotateCcw, XCircle, Forward, ChevronDown, Inbox as InboxIcon, Paperclip, Download, Keyboard, Tag, Loader2, Mail, MailOpen } from 'lucide-react';
 import { IconButton, KeyboardShortcut } from '../email/actions';
 import { AISummary } from '../email/ai-summary';
 import { Tag as EmailBadge } from '../email/badges';
 
-// ... (Keep SnoozeDropdown and LabelDropdown exactly as they are) ...
+// ... (Keep SnoozeDropdown and LabelDropdown exactly as they were) ...
 function SnoozeDropdown({ onSnooze }) {
+    // ... (No changes here)
     const [isOpen, setIsOpen] = useState(false);
     const [showCustomInput, setShowCustomInput] = useState(false);
     const [customDate, setCustomDate] = useState("");
@@ -70,6 +71,7 @@ function SnoozeDropdown({ onSnooze }) {
 }
 
 function LabelDropdown({ currentLabel, onSelect }) {
+    // ... (No changes here)
     const [isOpen, setIsOpen] = useState(false);
     const labels = [
         { name: 'General', color: 'bg-zinc-500' },
@@ -112,18 +114,33 @@ export default function ReadingPane({
     onOpenShortcuts,
     onLabelChange
 }) {
-    // Increased default height slightly so it doesn't look "broken" while loading
     const [iframeHeight, setIframeHeight] = useState(350);
-    // New State: To handle the "Fade In"
     const [isIframeLoaded, setIsIframeLoaded] = useState(false);
-
     const iframeRef = useRef(null);
 
     // Reset when email changes
     useEffect(() => {
         setIframeHeight(350);
-        setIsIframeLoaded(false); // Hide content immediately
+        setIsIframeLoaded(false);
     }, [email?.id]);
+
+    // Function to download recipient list
+    const handleDownloadRecipients = () => {
+        if (!email || !Array.isArray(email.to)) return;
+
+        const content = email.to.join('\n');
+        const blob = new Blob([content], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+
+        a.href = url;
+        a.download = `recipients_${email.id}.txt`;
+        document.body.appendChild(a);
+        a.click();
+
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
 
     const safeSrcDoc = useMemo(() => {
         if (!email) return "";
@@ -139,7 +156,6 @@ export default function ReadingPane({
             margin: 0; 
             padding: 24px; 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            /* FIX 1: Use transparent bg for sent/drafts so it matches the parent div exactly */
             color: ${email.folder === 'sent' || email.folder === 'drafts' ? '#e4e4e7' : '#09090b'}; 
             background-color: ${email.folder === 'sent' || email.folder === 'drafts' ? 'transparent' : '#ffffff'};
             overflow: hidden; cursor: text; line-height: 1.6;
@@ -160,9 +176,15 @@ export default function ReadingPane({
         if (iframe.contentWindow && iframe.contentWindow.document.body) {
             const bodyHeight = iframe.contentWindow.document.body.scrollHeight;
             setIframeHeight(bodyHeight + 30);
-            setIsIframeLoaded(true); // Reveal content only after height is set
+            setIsIframeLoaded(true);
         }
     };
+
+    useEffect(() => {
+        if (email && !email.is_read) {
+            onAction('toggle_read', email.id, true);
+        }
+    }, [email?.id]);
 
     if (!email) {
         return (
@@ -201,10 +223,17 @@ export default function ReadingPane({
                                 <IconButton icon={Archive} label="Archive (E)" shortcut="E" onClick={() => onAction('archive', email.id)} />
                             )}
                             <IconButton icon={Trash2} label="Delete (#)" shortcut="#" onClick={() => onAction('delete', email.id)} />
-                            <div className="w-px h-4 bg-zinc-800 mx-2"></div>
+                            <div className="w-[0.5px] h-6 bg-zinc-800 mx-2 self-center"></div>
                             <SnoozeDropdown onSnooze={(date) => onAction('snooze', email.id, date)} />
                         </>
                     )}
+                    <button
+                        onClick={() => onAction('toggle_read', email.id, !email.is_read)}
+                        className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors relative group"
+                        title={email.is_read ? "Mark as Unread" : "Mark as Read"}
+                    >
+                        {email.is_read ? <Mail size={18} /> : <MailOpen size={18} />}
+                    </button>
                     <IconButton icon={Keyboard} label="Shortcuts" onClick={() => onOpenShortcuts()} />
                     <div className="w-px h-6 bg-zinc-800 mx-2 self-center"></div>
                     <IconButton icon={Reply} label="Reply (R)" shortcut="R" onClick={() => onReply(email)} />
@@ -247,8 +276,43 @@ export default function ReadingPane({
                                         <span className="font-semibold text-zinc-200 truncate">{email.sender}</span>
                                         <span className="text-zinc-600 text-sm truncate hidden sm:inline">&lt;{email.email}&gt;</span>
                                     </div>
-                                    <div className="text-xs text-zinc-500 mt-0.5 truncate">
-                                        To <span className="text-zinc-400">{email.to}</span>
+                                    <div className="text-xs text-zinc-500 mt-0.5 truncate flex items-center gap-1.5">
+                                        {/* Always show 'To' if there is data */}
+                                        <span>To</span>
+
+                                        {Array.isArray(email.to) ? (
+                                            /* Array Case: Loop first 3, then show download button */
+                                            <div className="flex flex-col items-start gap-2">
+                                                {/* Row 1: Emails */}
+                                                <div className="flex flex-wrap items-center gap-1.5">
+                                                    {email.to.slice(0, 3).map((recipient, index) => (
+                                                        <span
+                                                            key={index}
+                                                            className="bg-indigo-500/20 w-fit border border-indigo-500/30 text-indigo-200 px-2 py-0.5 rounded text-[11px] flex items-center"
+                                                        >
+                                                            {recipient}
+                                                        </span>
+                                                    ))}
+                                                </div>
+
+                                                {/* Row 2: Download Button */}
+                                                {email.to.length > 3 && (
+                                                    <button
+                                                        onClick={handleDownloadRecipients}
+                                                        className="bg-zinc-800 hover:bg-zinc-700 hover:text-white text-zinc-400 border border-zinc-700 px-2 py-0.5 rounded text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer"
+                                                        title="Download full recipient list"
+                                                    >
+                                                        +{email.to.length - 3} others
+                                                        <Download size={10} />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            /* String Case: Render Once */
+                                            <span className="bg-indigo-500/20 w-fit border border-indigo-500/30 text-indigo-200 px-2 py-0.5 rounded text-[11px] flex items-center">
+                                                {email.to}
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
                             </div>
