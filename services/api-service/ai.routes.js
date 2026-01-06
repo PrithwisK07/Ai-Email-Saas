@@ -1,5 +1,12 @@
 const express = require("express");
 const nodemailer = require("nodemailer");
+const multer = require("multer");
+const pdf = require("pdf-parse");
+const mammoth = require("mammoth");
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+});
 
 // This function receives all our clients
 function createAiRouter(pgPool, weaviateClient, genAI) {
@@ -466,8 +473,74 @@ ANSWER:
     }
   });
 
-  // --- HELPER FUNCTIONS (ALL UPDATED) ---
+  router.post("/extract-emails", upload.single("file"), async (req, res) => {
+    try {
+      if (!req.file) {
+        console.error("❌ No file received in request.");
+        return res.status(400).json({ error: "No file uploaded" });
+      }
 
+      // 1. DEBUG LOGS: Check if file actually arrived
+      console.log("------------------------------------------------");
+      console.log(`[📂] File Received: ${req.file.originalname}`);
+      console.log(`[📂] Size: ${req.file.size} bytes`);
+      console.log(`[📂] MIME: ${req.file.mimetype}`);
+
+      let textContent = "";
+
+      // 2. EXTRACTION LOGIC
+      if (req.file.mimetype === "application/pdf") {
+        console.log("[⚙️] Parsing as PDF...");
+        const data = await pdf(req.file.buffer);
+        textContent = data.text;
+      } else if (
+        req.file.mimetype.includes("wordprocessingml") ||
+        req.file.originalname.endsWith(".docx")
+      ) {
+        console.log("[⚙️] Parsing as DOCX...");
+        const result = await mammoth.extractRawText({
+          buffer: req.file.buffer,
+        });
+        textContent = result.value;
+      } else {
+        // 3. CATCH-ALL: Treat everything else (txt, csv, unknown) as plain text
+        console.log("[⚙️] Parsing as Plain Text (Buffer -> UTF8)...");
+        textContent = req.file.buffer.toString("utf8");
+      }
+
+      // 4. DEBUG LOG: Check what we read
+      console.log(
+        `[📝] Extracted Text Length: ${textContent.length} characters`
+      );
+      if (textContent.length > 0) {
+        console.log(
+          `[📝] Preview: "${textContent
+            .substring(0, 50)
+            .replace(/\n/g, " ")}..."`
+        );
+      } else {
+        console.warn(
+          "⚠️ Text content is empty! File might be empty or encoding issue."
+        );
+      }
+
+      // 5. REGEX EXTRACTION
+      const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/gi;
+      const matches = textContent.match(emailRegex) || [];
+      const uniqueEmails = [
+        ...new Set(matches.map((e) => e.toLowerCase().trim())),
+      ];
+
+      console.log(`[✅] Found ${uniqueEmails.length} emails:`, uniqueEmails);
+
+      res.json({ emails: uniqueEmails });
+    } catch (error) {
+      console.error("❌ Extraction Critical Error:", error);
+      res.status(500).json({ error: "Failed to parse file: " + error.message });
+    }
+  });
+
+  // --- HELPER FUNCTIONS (ALL UPDATED) ---
   async function runSemanticSearch(queryTxt, tenantId) {
     let semanticChunks = [];
     try {

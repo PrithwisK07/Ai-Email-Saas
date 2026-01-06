@@ -4,9 +4,10 @@ import {
     X, Paperclip, Sparkles, Loader2, Wand2,
     Bold, Italic, Underline, Strikethrough,
     List, Link as LinkIcon,
-    AlignLeft, AlignCenter, AlignRight, Check
+    AlignLeft, AlignCenter, AlignRight, Check,
+    FileText, UploadCloud
 } from 'lucide-react';
-import { ActionService } from '@/lib/endpoints';
+import { ActionService, ContactService } from '@/lib/endpoints';
 
 export default function ComposeModal({ onClose, initialData = {}, onSend }) {
     // --- Helper to safely format array/string to string ---
@@ -34,6 +35,24 @@ export default function ComposeModal({ onClose, initialData = {}, onSend }) {
 
     const editorRef = useRef(null);
     const fileInputRef = useRef(null);
+
+    const [isMassMail, setIsMassMail] = useState(false);
+    const [extractedEmails, setExtractedEmails] = useState([]);
+    const [isExtracting, setIsExtracting] = useState(false);
+    const [suggestions, setSuggestions] = useState([]);
+    const massMailInputRef = useRef(null);
+
+    useEffect(() => {
+        async function fetchContacts() {
+            try {
+                const list = await ContactService.getSuggestions();
+                setSuggestions(list);
+            } catch (e) {
+                console.error("Failed to load contact suggestions", e);
+            }
+        }
+        fetchContacts();
+    }, []);
 
     // --- Initialize Editor HTML ---
     useEffect(() => {
@@ -95,6 +114,33 @@ export default function ComposeModal({ onClose, initialData = {}, onSend }) {
         onClose();
     };
 
+    const handleExtraction = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        setIsExtracting(true);
+        try {
+            // This now calls our deterministic backend route
+            const emails = await ActionService.extractEmailsFromFile(file);
+
+            if (emails && emails.length > 0) {
+                // Combine with existing extracted list + remove duplicates
+                setExtractedEmails(prev => [...new Set([...prev, ...emails])]);
+                setIsMassMail(true);
+                // toast.success(`Imported ${emails.length} emails`); // Optional: visual feedback
+                console.log(`[📂] Imported ${emails.length} addresses.`);
+            } else {
+                alert("No email addresses found in this file.");
+            }
+        } catch (error) {
+            console.error("Extraction failed:", error);
+            alert("Failed to read file.");
+        } finally {
+            setIsExtracting(false);
+            e.target.value = ''; // Reset input so you can upload the same file again if needed
+        }
+    };
+
     // --- Handlers ---
     const executeCommand = (command, value = null) => {
         document.execCommand(command, false, value);
@@ -120,7 +166,7 @@ export default function ComposeModal({ onClose, initialData = {}, onSend }) {
     const removeAttachment = (index) => setAttachments(prev => prev.filter((_, i) => i !== index));
 
     const handleSendClick = async () => {
-        if (!to || !subject) return;
+        if ((!to && !isMassMail) || !subject) return;
         setIsSending(true);
 
         // helper to convert file to base64
@@ -140,18 +186,32 @@ export default function ComposeModal({ onClose, initialData = {}, onSend }) {
                 attachments.map(f => (f instanceof File ? toBase64(f) : f)) // Handle existing vs new files
             );
 
-            const emailPayload = {
-                to: to.split(',').map(e => e.trim()).filter(e => e),
-                cc: cc ? cc.split(',').map(e => e.trim()).filter(e => e) : [],
-                bcc: bcc ? bcc.split(',').map(e => e.trim()).filter(e => e) : [],
-                subject,
-                html: editorRef.current.innerHTML,
-                attachments: processedAttachments
-            };
+            const htmlContent = editorRef.current.innerHTML;
 
-            await onSend(emailPayload);
-            // We do NOT call handleClose here because onSend usually closes the modal 
-            // and we don't want to save a draft of a sent email.
+            if (isMassMail) {
+                if (extractedEmails.length === 0) return;
+                const manualRecipients = to ? to.split(',').map(e => e.trim()).filter(Boolean) : [];
+                const finalRecipients = [...new Set([...manualRecipients, ...extractedEmails])];
+
+                await ActionService.sendMassMail({
+                    recipients: finalRecipients,
+                    subject,
+                    html: htmlContent,
+                    attachments: processedAttachments
+                });
+            } else {
+                const emailPayload = {
+                    to: to.split(',').map(e => e.trim()).filter(e => e),
+                    cc: cc ? cc.split(',').map(e => e.trim()).filter(e => e) : [],
+                    bcc: bcc ? bcc.split(',').map(e => e.trim()).filter(e => e) : [],
+                    subject,
+                    html: htmlContent,
+                    attachments: processedAttachments
+                };
+
+                await onSend(emailPayload);
+            }
+
             onClose();
         } catch (error) {
             console.error("Send failed", error);
@@ -192,6 +252,10 @@ export default function ComposeModal({ onClose, initialData = {}, onSend }) {
 
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+            <style jsx global>{`
+                .no-scrollbar::-webkit-scrollbar { display: none; }
+                .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+            `}</style>
             <div className="bg-[#141416] w-full max-w-4xl rounded-xl shadow-2xl border border-zinc-800 overflow-hidden flex flex-col h-[80vh] animate-in fade-in zoom-in-95 duration-200">
 
                 {/* Header */}
@@ -232,16 +296,82 @@ export default function ComposeModal({ onClose, initialData = {}, onSend }) {
                 {/* Form Fields */}
                 <div className="flex flex-col flex-1 p-6 space-y-4 overflow-y-auto">
                     <div className="border-b border-zinc-800 pb-2 focus-within:border-zinc-600 transition-colors">
-                        <input type="text" placeholder="To" value={to} onChange={(e) => setTo(e.target.value)} className="w-full bg-transparent outline-none text-zinc-200 placeholder:text-zinc-600" autoFocus={!initialData.to} />
+                        <div className="flex items-center gap-2">
+                            <RecipientInput
+                                value={to}
+                                onChange={(e) => setTo(e.target.value)}
+                                placeholder={isMassMail ? "Additional Recipients (comma separated)" : "To"}
+                                suggestions={suggestions}
+                                autoFocus={!initialData.to}
+                                className="flex-1"
+                            />
+
+                            <input
+                                type="file"
+                                ref={massMailInputRef}
+                                className="hidden"
+                                onChange={handleExtraction}
+                                accept=".pdf,.docx,.txt,.csv,.jpg,.png"
+                            />
+                            <button
+                                onClick={() => massMailInputRef.current?.click()}
+                                disabled={isExtracting}
+                                className="flex items-center gap-1.5 px-2 py-1 rounded bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 text-[10px] uppercase font-bold tracking-tight transition-all flex-shrink-0"
+                                title="Upload a document to extract emails"
+                            >
+                                {isExtracting ? <Loader2 size={12} className="animate-spin" /> : <UploadCloud size={12} />}
+                                {isMassMail ? "Add List" : "Import List"}
+                            </button>
+                        </div>
+
+                        {isMassMail && extractedEmails.length > 0 && (
+                            <div className="mt-2 animate-in fade-in slide-in-from-top-1">
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">
+                                        Extracted Recipients ({extractedEmails.length})
+                                    </span>
+                                    <button
+                                        onClick={() => { setIsMassMail(false); setExtractedEmails([]); }}
+                                        className="text-[10px] text-zinc-500 hover:text-zinc-300 underline"
+                                    >
+                                        Clear List
+                                    </button>
+                                </div>
+
+                                <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto no-scrollbar p-2 bg-zinc-900/50 rounded-lg border border-zinc-800">
+                                    {extractedEmails.map(email => (
+                                        <div key={email} className="bg-indigo-500/20 border border-indigo-500/30 text-indigo-200 px-2 py-0.5 rounded text-[11px] flex items-center gap-1.5">
+                                            {email}
+                                            <button
+                                                onClick={() => setExtractedEmails(prev => prev.filter(e => e !== email))}
+                                                className="hover:text-white"
+                                            >
+                                                <X size={10} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {showCcBcc && (
                         <div className="grid grid-cols-2 gap-4 animate-in slide-in-from-top-2 fade-in">
                             <div className="border-b border-zinc-800 pb-2 focus-within:border-zinc-600 transition-colors">
-                                <input type="text" placeholder="Cc" value={cc} onChange={(e) => setCc(e.target.value)} className="w-full bg-transparent outline-none text-zinc-200 placeholder:text-zinc-600 text-sm" />
+                                <RecipientInput
+                                    value={cc}
+                                    onChange={(e) => setCc(e.target.value)}
+                                    placeholder="Cc"
+                                    suggestions={suggestions}
+                                />
                             </div>
                             <div className="border-b border-zinc-800 pb-2 focus-within:border-zinc-600 transition-colors">
-                                <input type="text" placeholder="Bcc" value={bcc} onChange={(e) => setBcc(e.target.value)} className="w-full bg-transparent outline-none text-zinc-200 placeholder:text-zinc-600 text-sm" />
+                                <RecipientInput
+                                    value={bcc}
+                                    onChange={(e) => setBcc(e.target.value)}
+                                    placeholder="Bcc"
+                                    suggestions={suggestions}
+                                />
                             </div>
                         </div>
                     )}
@@ -297,7 +427,12 @@ export default function ComposeModal({ onClose, initialData = {}, onSend }) {
                                 </div>
                             )}
                         </div>
-                        <div ref={editorRef} contentEditable className="flex-1 p-4 outline-none text-zinc-300 overflow-y-auto prose prose-invert max-w-none prose-p:my-1 prose-ul:my-1" style={{ minHeight: '200px' }} />
+                        <div
+                            ref={editorRef}
+                            contentEditable
+                            className="flex-1 p-4 outline-none text-zinc-300 overflow-y-auto no-scrollbar prose prose-invert max-w-none prose-p:my-1 prose-ul:my-1"
+                            style={{ minHeight: '200px' }}
+                        />
                     </div>
                 </div>
 
@@ -310,13 +445,18 @@ export default function ComposeModal({ onClose, initialData = {}, onSend }) {
                     </div>
                     <div className="flex items-center gap-4">
                         <span className="text-xs text-zinc-500 hidden sm:inline">Cmd + Enter to send</span>
-                        <button onClick={handleSendClick} disabled={isSending || !to} className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2 rounded-md font-medium text-sm transition-all shadow-lg shadow-indigo-900/20 active:scale-95 hover:shadow-indigo-500/20 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                        <button onClick={handleSendClick} disabled={isSending || !to && extractedEmails.length === 0} className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2 rounded-md font-medium text-sm transition-all shadow-lg shadow-indigo-900/20 active:scale-95 hover:shadow-indigo-500/20 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
                             {isSending && <Loader2 size={16} className="animate-spin" />}
                             {isSending ? 'Sending...' : 'Send'}
                         </button>
                     </div>
                 </div>
             </div>
+            <datalist id="contacts-list">
+                {suggestions.map((email) => (
+                    <option key={email} value={email} />
+                ))}
+            </datalist>
         </div>
     );
 }
@@ -324,3 +464,110 @@ export default function ComposeModal({ onClose, initialData = {}, onSend }) {
 const ToolbarBtn = ({ icon: Icon, onClick, label }) => (
     <button onMouseDown={(e) => { e.preventDefault(); onClick(); }} className="p-1.5 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors" title={label}><Icon size={14} /></button>
 );
+
+const RecipientInput = ({ value, onChange, placeholder, suggestions = [], autoFocus, className }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const [activeIndex, setActiveIndex] = useState(0);
+    const [filteredSuggestions, setFilteredSuggestions] = useState([]);
+    const [cursorPosition, setCursorPosition] = useState(0);
+    const containerRef = useRef(null);
+    const inputRef = useRef(null);
+
+    // 1. Determine what the user is currently typing (the last segment after a comma)
+    const getCurrentSearchTerm = (val) => {
+        const parts = val.split(',');
+        return parts[parts.length - 1].trim();
+    };
+
+    // 2. Filter suggestions based on that search term
+    useEffect(() => {
+        const term = getCurrentSearchTerm(value);
+        if (term.length > 0 && isOpen) {
+            const filtered = suggestions.filter(email =>
+                email.toLowerCase().includes(term.toLowerCase()) &&
+                !value.includes(email) // Exclude already added
+            );
+            setFilteredSuggestions(filtered);
+            setActiveIndex(0);
+        } else {
+            setFilteredSuggestions([]);
+        }
+    }, [value, isOpen, suggestions]);
+
+    // 3. Handle selecting an email
+    const selectEmail = (email) => {
+        const parts = value.split(',');
+        parts.pop(); // Remove partial
+        parts.push(email);
+        const newValue = parts.join(', ') + ', ';
+        onChange({ target: { value: newValue } });
+        setIsOpen(false);
+        inputRef.current?.focus();
+    };
+
+    // 4. Keyboard Navigation
+    const handleKeyDown = (e) => {
+        if (filteredSuggestions.length === 0) return;
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setActiveIndex(prev => (prev + 1) % filteredSuggestions.length);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setActiveIndex(prev => (prev - 1 + filteredSuggestions.length) % filteredSuggestions.length);
+        } else if (e.key === 'Enter' || e.key === 'Tab') {
+            if (isOpen && filteredSuggestions[activeIndex]) {
+                e.preventDefault();
+                selectEmail(filteredSuggestions[activeIndex]);
+            }
+        } else if (e.key === 'Escape') {
+            setIsOpen(false);
+        }
+    };
+
+    return (
+        <div className={`relative ${className}`} ref={containerRef}>
+            <input
+                ref={inputRef}
+                type="text"
+                value={value}
+                onChange={(e) => {
+                    onChange(e);
+                    setIsOpen(true);
+                }}
+                onFocus={() => setIsOpen(true)}
+                onBlur={() => setTimeout(() => setIsOpen(false), 200)} // Delay to allow click
+                onKeyDown={handleKeyDown}
+                placeholder={placeholder}
+                autoFocus={autoFocus}
+                className="w-full bg-transparent outline-none text-zinc-200 placeholder:text-zinc-600 text-sm"
+                autoComplete="off"
+            />
+
+            {/* Custom Dropdown */}
+            {isOpen && filteredSuggestions.length > 0 && (
+                <div className="absolute left-0 top-full mt-2 w-72 bg-[#141416] border border-zinc-800 rounded-lg shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                    <div className="max-h-60 overflow-y-auto no-scrollbar py-1">
+                        {filteredSuggestions.map((email, index) => (
+                            <button
+                                key={email}
+                                onMouseDown={(e) => { e.preventDefault(); selectEmail(email); }}
+                                onMouseEnter={() => setActiveIndex(index)}
+                                className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 transition-colors ${index === activeIndex
+                                    ? 'bg-indigo-600/10 text-indigo-300'
+                                    : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
+                                    }`}
+                            >
+                                <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${index === activeIndex ? 'bg-indigo-600 text-white' : 'bg-zinc-800 text-zinc-500'
+                                    }`}>
+                                    {email[0].toUpperCase()}
+                                </div>
+                                {email}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
