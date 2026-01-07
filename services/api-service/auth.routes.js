@@ -207,7 +207,6 @@ function createAuthRouter(pgPool, genAI) {
       } finally {
         client.release();
       }
-      console.log("settings updated", newSettings);
       res.json({ success: true });
     } catch (err) {
       console.error(err);

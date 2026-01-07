@@ -41,8 +41,8 @@ export default function SettingsModal({ onClose }) {
             });
 
             // Update LocalStorage so Sidebar updates immediately without refresh
-            localStorage.setItem("zenith_user_name", name);
-            localStorage.setItem("zenith_signature", signature);
+            localStorage.setItem("mailWise_user_name", name);
+            localStorage.setItem("mailWise_signature", signature);
 
             toast.success("Saved!");
             onClose();

@@ -5,7 +5,7 @@ import {
     Bold, Italic, Underline, Strikethrough,
     List, Link as LinkIcon,
     AlignLeft, AlignCenter, AlignRight, Check,
-    FileText, UploadCloud
+    SpellCheck, UploadCloud
 } from 'lucide-react';
 import { ActionService, ContactService } from '@/lib/endpoints';
 
@@ -41,6 +41,67 @@ export default function ComposeModal({ onClose, initialData = {}, onSend }) {
     const [isExtracting, setIsExtracting] = useState(false);
     const [suggestions, setSuggestions] = useState([]);
     const massMailInputRef = useRef(null);
+
+    const [isPolishing, setIsPolishing] = useState(false);
+    const [isCompleting, setIsCompleting] = useState(false);
+
+    const handleFixGrammar = async () => {
+        const text = editorRef.current.innerHTML;
+        if (!text || text === "<br>") return;
+
+        setIsPolishing(true);
+        try {
+            const corrected = await ActionService.fixGrammar(text);
+            editorRef.current.innerHTML = corrected;
+            // visual feedback
+            editorRef.current.animate([
+                { backgroundColor: '#4f46e533' }, // flash indigo
+                { backgroundColor: 'transparent' }
+            ], { duration: 500 });
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setIsPolishing(false);
+        }
+    };
+
+    // --- 2. Autocomplete Handler (Keyboard) ---
+    const handleKeyDown = async (e) => {
+        // ... existing send/close handlers ...
+
+        // Trigger: Ctrl + Space (Standard autocomplete shortcut)
+        if ((e.ctrlKey || e.metaKey) && e.code === 'Space') {
+            e.preventDefault();
+
+            // Get text ONLY up to the cursor (Simple approximation)
+            const selection = window.getSelection();
+            if (!selection.rangeCount) return;
+
+            // We use innerText to save tokens (no HTML needed for context)
+            const context = editorRef.current.innerText;
+
+            if (!context.trim()) return;
+
+            setIsCompleting(true);
+            try {
+                const completion = await ActionService.autocomplete(context);
+
+                if (completion) {
+                    // Insert the text at the cursor position
+                    document.execCommand('insertText', false, " " + completion);
+                }
+            } catch (err) {
+                console.error("Autocomplete error", err);
+            } finally {
+                setIsCompleting(false);
+            }
+        }
+    };
+
+    useEffect(() => {
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [to, cc, bcc, subject]);
 
     useEffect(() => {
         async function fetchContacts() {
@@ -409,6 +470,24 @@ export default function ComposeModal({ onClose, initialData = {}, onSend }) {
                                     <ToolbarBtn icon={AlignRight} onClick={() => executeCommand('justifyRight')} label="Align Right" />
                                     <div className="w-px h-4 bg-zinc-800 mx-1 flex-shrink-0"></div>
                                     <ToolbarBtn icon={LinkIcon} onClick={() => setShowLinkInput(true)} label="Link" />
+
+                                    <div className="w-px h-4 bg-zinc-800 mx-1 flex-shrink-0"></div>
+
+                                    <button
+                                        onMouseDown={(e) => { e.preventDefault(); handleFixGrammar(); }}
+                                        disabled={isPolishing}
+                                        className={`p-1.5 rounded transition-colors flex items-center gap-1 ${isPolishing ? 'text-indigo-400 bg-indigo-500/10' : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800'}`}
+                                        title="Fix Grammar & Spelling"
+                                    >
+                                        {isPolishing ? <Loader2 size={14} className="animate-spin" /> : <SpellCheck size={14} />}
+                                    </button>
+
+                                    {/* Autocomplete Indicator (Optional but helpful) */}
+                                    {isCompleting && (
+                                        <span className="text-[10px] text-indigo-400 animate-pulse ml-2 flex items-center gap-1">
+                                            <Sparkles size={10} /> Completing...
+                                        </span>
+                                    )}
                                 </>
                             ) : (
                                 <div className="flex items-center gap-2 w-full animate-in fade-in slide-in-from-left-2">

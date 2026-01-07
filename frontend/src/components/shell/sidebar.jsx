@@ -26,12 +26,12 @@ export default function Sidebar({
 
     useEffect(() => {
         // 1. Initial Load
-        const storedName = localStorage.getItem("zenith_user_name");
+        const storedName = localStorage.getItem("mailWise_user_name");
         if (storedName) setUserName(storedName);
 
         // 2. Listen for changes (so it updates when you save settings)
         const handleStorageChange = () => {
-            const newName = localStorage.getItem("zenith_user_name");
+            const newName = localStorage.getItem("mailWise_user_name");
             if (newName) setUserName(newName);
         };
 
