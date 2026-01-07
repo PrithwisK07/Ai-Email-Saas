@@ -241,7 +241,9 @@ export default function ReadingPane({
                 </div>
 
                 <div className="flex items-center gap-3 text-zinc-500 text-sm">
-                    <LabelDropdown currentLabel={email.tag} onSelect={(newLabel) => onLabelChange(email.id, newLabel)} />
+                    {email.folder === 'inbox' ? (
+                        <LabelDropdown currentLabel={email.tag} onSelect={(newLabel) => onLabelChange(email.id, newLabel)} />
+                    ) : ("")}
                     <span className="hidden lg:inline">{currentIndex + 1} of {totalCount}</span>
                     <div className="flex bg-zinc-900/50 rounded-lg p-0.5">
                         <button onClick={() => onNavigate('prev')} className="p-1.5 hover:bg-zinc-800 rounded-md transition-colors disabled:opacity-30" disabled={currentIndex === 0}><ChevronDown className="rotate-180" size={16} /></button>

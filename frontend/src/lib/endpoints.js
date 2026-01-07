@@ -122,6 +122,16 @@ export const ActionService = {
     const res = await api.post("/send/mass", payload);
     return res.data;
   },
+
+  autocomplete: async (context) => {
+    const res = await api.post("/ai/autocomplete", { context });
+    return res.data.completion;
+  },
+
+  fixGrammar: async (text) => {
+    const res = await api.post("/ai/polish", { text });
+    return res.data.corrected;
+  },
 };
 
 export const ContactService = {

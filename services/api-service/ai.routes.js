@@ -540,6 +540,76 @@ ANSWER:
     }
   });
 
+  router.post("/autocomplete", async (req, res) => {
+    const { context } = req.body; // The text preceding the cursor
+    if (!context) return res.status(400).json({ error: "Context required" });
+
+    try {
+      const prompt = `
+        You are a predictive text engine for professional emails.
+        Analyze the following incomplete text: "${context}"
+        
+        Task: Provide the most likely next 5-10 words to complete the thought.
+        - Do NOT repeat the input text.
+        - Output ONLY the completion text.
+        - If the sentence is complete, provide a logical next sentence.
+        - Keep it professional and concise.
+      `.trim();
+
+      const result = await genAI.models.generateContent({
+        model: "gemini-2.5-flash", // Flash is faster (crucial for autocomplete)
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+      });
+
+      let completion = result.text.trim();
+
+      // Clean up common AI quirks (like quotes around the response)
+      completion = completion.replace(/^"/, "").replace(/"$/, "");
+
+      res.json({ completion });
+    } catch (error) {
+      console.error("Autocomplete failed:", error);
+      res.status(500).json({ error: "Failed to predict text" });
+    }
+  });
+
+  /**
+   * [POST] /ai/polish
+   * Fixes grammar, spelling, and tone.
+   */
+  router.post("/polish", async (req, res) => {
+    const { text } = req.body;
+
+    if (!text) return res.status(400).json({ error: "Text required" });
+
+    try {
+      const prompt = `
+        Act as a professional copyeditor. 
+        Correct the grammar, spelling, and capitalization in the text below.
+        Maintain the original meaning and tone. 
+        Return ONLY the corrected HTML content. Do not add markdown blocks.
+        
+        Text to fix:
+        ${text}
+      `.trim();
+
+      const result = await genAI.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+      });
+
+      let corrected = result.text.trim();
+
+      // Remove markdown code blocks if Gemini adds them
+      corrected = corrected.replace(/```html/g, "").replace(/```/g, "");
+
+      res.json({ corrected });
+    } catch (error) {
+      console.error("Polish failed:", error);
+      res.status(500).json({ error: "Failed to fix grammar" });
+    }
+  });
+
   // --- HELPER FUNCTIONS (ALL UPDATED) ---
   async function runSemanticSearch(queryTxt, tenantId) {
     let semanticChunks = [];
