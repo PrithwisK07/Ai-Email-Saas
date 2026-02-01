@@ -20,7 +20,7 @@ services:
     container_name: rabbitmq_broker
     ports:
       - "5672:5672"   # AMQP protocol port
-      - "15672:15672"  # Management UI port
+      - "25672:15672"  # Management UI port
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     networks:

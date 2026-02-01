@@ -20,19 +20,23 @@ export default function LoginModal({ onLoginSuccess }) {
         try {
             if (isRegistering) {
                 await AuthService.register(name, email, password);
-                // Auto-login after register, or ask user to switch to login. 
-                // For simplicity, let's switch them to login view:
                 setIsRegistering(false);
                 setError("Account created! Please log in.");
                 setLoading(false);
             } else {
-                await AuthService.login(email, password);
+                const response = await AuthService.login(email, password);
+
+                localStorage.setItem("mailWise_token", response.token);
+                localStorage.setItem("mailWise_user_name", JSON.stringify(response.user));
+
                 setLoading(false);
-                if (onLoginSuccess) onLoginSuccess();
+                if (onLoginSuccess) {
+                    onLoginSuccess(response.user);
+                }
             }
         } catch (err) {
             console.error(err);
-            setError(err.response?.data?.error || "Authentication failed");
+            setError(err.response?.data?.error || err.message || "Authentication failed");
             setLoading(false);
         }
     };
