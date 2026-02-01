@@ -22,21 +22,34 @@ export default function Sidebar({
     onOpenShortcuts
 }) {
     const [profileOpen, setProfileOpen] = useState(false);
-    const [userName, setUserName] = useState("User");
+    const [user, setUser] = useState({ name: "User", email: "", avatar_url: null });
 
     useEffect(() => {
-        // 1. Initial Load
-        const storedName = localStorage.getItem("mailWise_user_name");
-        if (storedName) setUserName(storedName);
-
-        // 2. Listen for changes (so it updates when you save settings)
-        const handleStorageChange = () => {
-            const newName = localStorage.getItem("mailWise_user_name");
-            if (newName) setUserName(newName);
+        // 1. Initial Load from LocalStorage
+        const loadUser = () => {
+            const storedUser = localStorage.getItem("mailWise_user_name"); // Note: You might want to rename this key to 'mailWise_user' eventually since it stores the whole obj
+            if (storedUser) {
+                try {
+                    const parsed = JSON.parse(storedUser);
+                    setUser(parsed);
+                } catch (e) {
+                    console.error("Failed to parse user in sidebar", e);
+                }
+            }
         };
+        loadUser();
 
+        // 2. Listen for storage changes (e.g. after Settings update)
+        const handleStorageChange = () => loadUser();
         window.addEventListener("storage", handleStorageChange);
-        return () => window.removeEventListener("storage", handleStorageChange);
+
+        // Custom event listener if you emit one from page.jsx (Optional but good for SPA updates)
+        window.addEventListener("user-updated", loadUser);
+
+        return () => {
+            window.removeEventListener("storage", handleStorageChange);
+            window.removeEventListener("user-updated", loadUser);
+        };
     }, []);
 
     const menuItems = [
@@ -79,7 +92,6 @@ export default function Sidebar({
                     <div className={`w-8 h-8 min-w-[2rem] rounded-lg bg-gradient-to-tr from-indigo-600 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-900/20 transition-transform duration-300 flex-shrink-0 ${!isOpen && 'rotate-180'}`}>
                         <div className="w-4 h-4 border-2 border-white rounded-sm rotate-45"></div>
                     </div>
-                    {/* Fixed: Added whitespace-nowrap to prevent text squeezing */}
                     <span className={`ml-3 font-bold text-zinc-100 tracking-tight text-lg overflow-hidden whitespace-nowrap transition-all duration-300 ${isOpen ? 'opacity-100 max-w-[200px]' : 'opacity-0 max-w-0'}`}>
                         MailWise
                     </span>
@@ -91,7 +103,7 @@ export default function Sidebar({
                         <button
                             onClick={onSync}
                             disabled={isSyncing}
-                            className="p-1.5 text-zinc-500 hover:text-white hover:bg-white/5 rounded-md transition-all flex-shrink-0"
+                            className={`p-1.5 text-zinc-500 hover:text-white hover:bg-white/5 rounded-md transition-all flex-shrink-0 ${isSyncing ? 'cursor-not-allowed' : ''}`}
                             title="Sync Emails"
                         >
                             {isSyncing ? (
@@ -119,7 +131,6 @@ export default function Sidebar({
                     {/* Compose Button */}
                     <button
                         onClick={onCompose}
-                        // Fixed: justify-center when closed to center icon perfectly
                         className={`w-full flex items-center gap-3 bg-zinc-100 hover:bg-white hover:scale-[1.02] active:scale-95 text-black py-2.5 px-4 rounded-lg font-medium transition-all shadow-lg shadow-zinc-900/50 group flex-shrink-0 ${!isOpen && 'justify-center px-0'}`}
                         title={!isOpen ? "Compose" : ""}
                     >
@@ -132,7 +143,7 @@ export default function Sidebar({
                         )}
                     </button>
 
-                    {/* Ask AI Button - NOW VISIBLE IN COLLAPSED MODE */}
+                    {/* Ask AI Button */}
                     <button
                         onClick={onAskAI}
                         className={`w-full flex items-center gap-2 bg-gradient-to-r from-indigo-900/50 to-purple-900/50 hover:from-indigo-900/70 hover:to-purple-900/70 border border-indigo-500/30 text-indigo-200 py-2.5 rounded-lg font-medium text-sm transition-all shadow-lg shadow-indigo-900/10 group flex-shrink-0 ${!isOpen ? 'justify-center px-0' : 'px-4'}`}
@@ -202,13 +213,24 @@ export default function Sidebar({
                         onClick={() => setProfileOpen(!profileOpen)}
                         className={`w-full flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-zinc-800/50 transition-colors group ${!isOpen && 'justify-center'}`}
                     >
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-xs font-bold text-white shadow-lg shadow-indigo-500/20 flex-shrink-0">
-                            {userName.charAt(0).toUpperCase()}
+                        {/* Avatar Image or Initials */}
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-xs font-bold text-white shadow-lg shadow-indigo-500/20 flex-shrink-0 overflow-hidden">
+                            {user?.avatar_url ? (
+                                <img src={user.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+                            ) : (
+                                <span>{(user?.name || "U").charAt(0).toUpperCase()}</span>
+                            )}
                         </div>
+
                         {isOpen && (
                             <>
                                 <div className="flex-1 min-w-0 text-left animate-in fade-in duration-300">
-                                    <p className="text-sm font-medium text-zinc-200 truncate group-hover:text-white">{userName}</p>
+                                    <p className="text-sm font-medium text-zinc-200 truncate group-hover:text-white">
+                                        {user?.name || "User"}
+                                    </p>
+                                    <p className="text-[10px] text-zinc-500 truncate">
+                                        {user?.email || ""}
+                                    </p>
                                 </div>
                                 <ChevronUp size={14} className={`text-zinc-600 transition-transform flex-shrink-0 ${profileOpen ? 'rotate-180' : ''}`} />
                             </>

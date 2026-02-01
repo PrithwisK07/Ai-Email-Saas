@@ -13,10 +13,12 @@ import SearchModal from "@/components/shell/command";
 import AskAIModal from "@/components/shell/ask-ai-modal";
 import SettingsModal from "@/components/shell/settings-modal";
 import { AuthService, EmailService, ActionService } from "@/lib/endpoints";
+import { useSearchParams, useRouter } from "next/navigation";
+import GmailGuard from "@/components/shell/gmail-guard";
 
 export default function MailWiseMailPage() {
   // --- AUTH STATE ---
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user, setUser] = useState(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
 
   // --- APP STATE ---
@@ -39,13 +41,49 @@ export default function MailWiseMailPage() {
 
   const selectedEmailIdRef = useRef(selectedEmailId);
 
+  // Routing
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  useEffect(() => {
+    async function handleConnectionSuccess() {
+      const status = searchParams.get("status");
+      const connectedEmail = searchParams.get("email");
+
+      if (status === "connected" && user && !user.is_gmail_connected) {
+        const freshSettings = await AuthService.getSettings();
+
+        const updatedUser = {
+          ...user,
+          is_gmail_connected: true,
+          name: freshSettings.name,
+          avatar_url: freshSettings.avatar_url,
+        };
+
+        setUser(updatedUser);
+
+        localStorage.setItem("mailWise_user_name", JSON.stringify(updatedUser));
+
+        if (connectedEmail) {
+          toast.success(`Connected to ${connectedEmail}`);
+        } else {
+          toast.success("Gmail connected successfully!");
+        }
+
+        router.replace("/");
+      } else if (status === "failed") {
+        toast.error("Failed to connect Gmail.");
+        router.replace("/");
+      }
+    }
+
+    handleConnectionSuccess();
+  }, [router, searchParams, user]);
+
   const handleSearchSelect = (searchResult) => {
     const exists = emails.find((e) => e.id === searchResult.id);
 
     if (!exists) {
-      const MY_EMAIL = "karmakarprithwis566@gmail.com";
-      const isSentByMe = (searchResult.sender || "").includes(MY_EMAIL);
-
       const formatted = {
         id: searchResult.id,
         sender: searchResult.sender,
@@ -73,16 +111,50 @@ export default function MailWiseMailPage() {
     setSelectedEmailId(searchResult.id);
   };
 
-  // Your Email
-  const MY_EMAIL = "karmakarprithwis566@gmail.com";
-
-  // --- 1. Check Authentication on Mount ---
   useEffect(() => {
-    const checkAuth = () => {
-      const isAuth = AuthService.isAuthenticated();
-      setIsAuthenticated(isAuth);
+    const checkAuth = async () => {
+      const storedUser = localStorage.getItem("mailWise_user_name");
+      const token = localStorage.getItem("mailWise_token");
+
+      if (token && storedUser) {
+        try {
+          const parsedUser = JSON.parse(storedUser);
+          setUser(parsedUser);
+
+          const freshSettings = await AuthService.getSettings();
+
+          if (
+            freshSettings.is_gmail_connected !== parsedUser.is_gmail_connected
+          ) {
+            console.log("⚠️ Syncing Gmail Status with DB...");
+
+            const updatedUser = {
+              ...parsedUser,
+              is_gmail_connected: freshSettings.is_gmail_connected,
+            };
+
+            setUser(updatedUser);
+            localStorage.setItem(
+              "mailWise_user_name",
+              JSON.stringify(updatedUser),
+            );
+
+            if (!freshSettings.is_gmail_connected) {
+              toast.error("Gmail disconnected. Please reconnect.");
+            }
+          }
+        } catch (e) {
+          console.error("Auth Validation Failed:", e);
+          if (e.response && e.response.status === 401) {
+            localStorage.removeItem("mailWise_user_name");
+            localStorage.removeItem("mailWise_token");
+            setUser(null);
+          }
+        }
+      }
       setIsLoadingAuth(false);
     };
+
     checkAuth();
   }, []);
 
@@ -207,7 +279,7 @@ export default function MailWiseMailPage() {
           !formatted.find((e) => e.id === currentSelectedId)
         ) {
           const preservedEmail = prevEmails.find(
-            (e) => e.id === currentSelectedId
+            (e) => e.id === currentSelectedId,
           );
           if (preservedEmail) {
             return [preservedEmail, ...formatted];
@@ -248,7 +320,7 @@ export default function MailWiseMailPage() {
 
   // --- 4. Lifecycle Effects ---
   useEffect(() => {
-    if (isAuthenticated) {
+    if (user) {
       // A. Initial Load
       loadEmailsFromBackend().then((data) => {
         if (data.length > 0 && !selectedEmailId) {
@@ -267,12 +339,7 @@ export default function MailWiseMailPage() {
 
       return () => clearInterval(intervalId);
     }
-  }, [isAuthenticated]);
-
-  // --- Handlers ---
-  const handleLoginSuccess = () => {
-    setIsAuthenticated(true);
-  };
+  }, [user]);
 
   const filteredEmails = emails.filter((email) => {
     if (showUnreadOnly && email.is_read) return false;
@@ -284,7 +351,7 @@ export default function MailWiseMailPage() {
 
   const selectedEmail = emails.find((e) => e.id === selectedEmailId);
   const currentIndex = filteredEmails.findIndex(
-    (e) => e.id === selectedEmailId
+    (e) => e.id === selectedEmailId,
   );
 
   const handleTabChange = (newTab) => {
@@ -305,7 +372,7 @@ export default function MailWiseMailPage() {
     const newStatus = !email.isStarred;
 
     setEmails((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, isStarred: newStatus } : e))
+      prev.map((e) => (e.id === id ? { ...e, isStarred: newStatus } : e)),
     );
 
     // 2. API Call
@@ -315,7 +382,7 @@ export default function MailWiseMailPage() {
       console.error("Failed to star", error);
       // Revert on failure
       setEmails((prev) =>
-        prev.map((e) => (e.id === id ? { ...e, isStarred: !newStatus } : e))
+        prev.map((e) => (e.id === id ? { ...e, isStarred: !newStatus } : e)),
       );
     }
   };
@@ -325,7 +392,7 @@ export default function MailWiseMailPage() {
       // 1. Optimistic Update (Remove from current view immediately)
       // Note: If we are in "Archive" tab, this might look weird, but usually you don't archive from archive.
       setEmails((prev) =>
-        prev.map((e) => (e.id === id ? { ...e, folder: "archive" } : e))
+        prev.map((e) => (e.id === id ? { ...e, folder: "archive" } : e)),
       );
       if (selectedEmailId === id) setSelectedEmailId(null);
 
@@ -338,13 +405,13 @@ export default function MailWiseMailPage() {
         toast.error("Failed to archive");
       }
     },
-    [selectedEmailId]
+    [selectedEmailId],
   );
 
   const handleLabelChange = async (id, newLabel) => {
     // Optimistic Update
     setEmails((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, tag: newLabel } : e))
+      prev.map((e) => (e.id === id ? { ...e, tag: newLabel } : e)),
     );
     try {
       await ActionService.updateLabel(id, newLabel);
@@ -356,7 +423,7 @@ export default function MailWiseMailPage() {
   // NEW: Unarchive (Move to Inbox)
   const handleUnarchive = async (id) => {
     setEmails((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, folder: "inbox" } : e))
+      prev.map((e) => (e.id === id ? { ...e, folder: "inbox" } : e)),
     );
     if (selectedEmailId === id) setSelectedEmailId(null);
 
@@ -392,7 +459,7 @@ export default function MailWiseMailPage() {
         toast.error("Failed to delete");
       }
     },
-    [emails, selectedEmailId]
+    [emails, selectedEmailId],
   );
 
   const handleRestore = async (id) => {
@@ -480,7 +547,7 @@ export default function MailWiseMailPage() {
       (att) => ({
         ...att,
         name: att.filename, // Normalize 'filename' to 'name' for the UI
-      })
+      }),
     );
 
     // 3. Set Compose Data
@@ -514,8 +581,8 @@ export default function MailWiseMailPage() {
     // 1. Optimistic Update: Hide email immediately by setting status to 'snoozed'
     setEmails((prev) =>
       prev.map((e) =>
-        e.id === id ? { ...e, status: "snoozed", folder: "snoozed" } : e
-      )
+        e.id === id ? { ...e, status: "snoozed", folder: "snoozed" } : e,
+      ),
     );
     if (selectedEmailId === id) setSelectedEmailId(null);
 
@@ -533,8 +600,8 @@ export default function MailWiseMailPage() {
     // 1. Optimistic Update (Update UI immediately)
     setEmails((prev) =>
       prev.map((email) =>
-        email.id === id ? { ...email, is_read: newStatus } : email
-      )
+        email.id === id ? { ...email, is_read: newStatus } : email,
+      ),
     );
 
     // 2. Call API
@@ -643,97 +710,101 @@ export default function MailWiseMailPage() {
   return (
     <div className="flex h-screen w-full bg-[#09090b] text-zinc-400 font-sans selection:bg-indigo-500/30 overflow-hidden">
       <ToastContainer />
-      {!isAuthenticated && <LoginModal onLoginSuccess={handleLoginSuccess} />}
+      {!user && <LoginModal onLoginSuccess={(u) => setUser(u)} />}
 
-      {askAIOpen && <AskAIModal onClose={() => setAskAIOpen(false)} />}
+      <GmailGuard user={user}>
+        {askAIOpen && <AskAIModal onClose={() => setAskAIOpen(false)} />}
 
-      {shortcutsOpen && (
-        <ShortcutsHelp onClose={() => setShortcutsOpen(false)} />
-      )}
+        {shortcutsOpen && (
+          <ShortcutsHelp onClose={() => setShortcutsOpen(false)} />
+        )}
 
-      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+        {settingsOpen && (
+          <SettingsModal onClose={() => setSettingsOpen(false)} />
+        )}
 
-      <Sidebar
-        isOpen={sidebarOpen}
-        setIsOpen={setSidebarOpen}
-        activeTab={activeTab}
-        setActiveTab={handleTabChange}
-        isSyncing={isSyncing} // <--- PASSING THE SYNC STATE
-        onSync={triggerSync} // <--- ALLOW MANUAL SYNC CLICK
-        counts={{
-          inbox: emails.filter((e) => e.folder === "inbox").length,
-          starred: emails.filter((e) => e.isStarred).length,
-          sent: emails.filter((e) => e.folder === "sent").length,
-          drafts: emails.filter((e) => e.folder === "drafts").length,
-          archive: emails.filter((e) => e.folder === "archive").length,
-          trash: emails.filter((e) => e.folder === "trash").length,
-        }}
-        onCompose={() => {
-          setComposeData({});
-          setIsComposing(true);
-        }}
-        onAskAI={() => setAskAIOpen(true)}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onOpenShortcuts={() => setShortcutsOpen(true)}
-      />
-
-      <EmailList
-        emails={filteredEmails}
-        activeTab={activeTab}
-        selectedEmailId={selectedEmailId}
-        onSelect={(id) => {
-          const email = emails.find((e) => e.id === id);
-          if (email && email.folder === "drafts") {
-            openDraft(email); // Open Compose for drafts
-          } else {
-            setSelectedEmailId(id); // Open Reader for others
-          }
-        }}
-        onToggleStar={handleToggleStar}
-        onUnarchive={handleUnarchive}
-        onArchive={handleArchive}
-        onDelete={handleDelete}
-        onRestore={handleRestore}
-        onSearchClick={() => setSearchOpen(true)}
-        showUnreadOnly={showUnreadOnly}
-        onToggleUnread={() => setShowUnreadOnly(!showUnreadOnly)}
-        onRefresh={triggerSync}
-      />
-
-      <ReadingPane
-        email={selectedEmail}
-        totalCount={filteredEmails.length}
-        currentIndex={currentIndex}
-        onNavigate={handleNavigate}
-        onReply={handleReply}
-        onAction={(type, id, data) => {
-          if (type === "archive") handleArchive(id);
-          if (type === "unarchive") handleUnarchive(id);
-          if (type === "delete") handleDelete(id);
-          if (type === "restore") handleRestore(id);
-          if (type === "reply") handleReply(selectedEmail);
-          if (type === "forward") handleForward(selectedEmail);
-          if (type === "snooze") handleSnooze(id, data);
-          if (type === "toggle_read") handleReadToggle(id, data);
-        }}
-        onOpenShortcuts={() => setShortcutsOpen(true)}
-        onLabelChange={handleLabelChange}
-      />
-
-      {searchOpen && (
-        <SearchModal
-          onClose={() => setSearchOpen(false)}
-          onSelect={handleSearchSelect}
+        <Sidebar
+          isOpen={sidebarOpen}
+          setIsOpen={setSidebarOpen}
+          activeTab={activeTab}
+          setActiveTab={handleTabChange}
+          isSyncing={isSyncing} // <--- PASSING THE SYNC STATE
+          onSync={triggerSync} // <--- ALLOW MANUAL SYNC CLICK
+          counts={{
+            inbox: emails.filter((e) => e.folder === "inbox").length,
+            starred: emails.filter((e) => e.isStarred).length,
+            sent: emails.filter((e) => e.folder === "sent").length,
+            drafts: emails.filter((e) => e.folder === "drafts").length,
+            archive: emails.filter((e) => e.folder === "archive").length,
+            trash: emails.filter((e) => e.folder === "trash").length,
+          }}
+          onCompose={() => {
+            setComposeData({});
+            setIsComposing(true);
+          }}
+          onAskAI={() => setAskAIOpen(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenShortcuts={() => setShortcutsOpen(true)}
         />
-      )}
 
-      {isComposing && (
-        <ComposeModal
-          initialData={composeData}
-          onSend={handleSend}
-          onClose={() => setIsComposing(false)}
+        <EmailList
+          emails={filteredEmails}
+          activeTab={activeTab}
+          selectedEmailId={selectedEmailId}
+          onSelect={(id) => {
+            const email = emails.find((e) => e.id === id);
+            if (email && email.folder === "drafts") {
+              openDraft(email); // Open Compose for drafts
+            } else {
+              setSelectedEmailId(id); // Open Reader for others
+            }
+          }}
+          onToggleStar={handleToggleStar}
+          onUnarchive={handleUnarchive}
+          onArchive={handleArchive}
+          onDelete={handleDelete}
+          onRestore={handleRestore}
+          onSearchClick={() => setSearchOpen(true)}
+          showUnreadOnly={showUnreadOnly}
+          onToggleUnread={() => setShowUnreadOnly(!showUnreadOnly)}
+          onRefresh={triggerSync}
         />
-      )}
+
+        <ReadingPane
+          email={selectedEmail}
+          totalCount={filteredEmails.length}
+          currentIndex={currentIndex}
+          onNavigate={handleNavigate}
+          onReply={handleReply}
+          onAction={(type, id, data) => {
+            if (type === "archive") handleArchive(id);
+            if (type === "unarchive") handleUnarchive(id);
+            if (type === "delete") handleDelete(id);
+            if (type === "restore") handleRestore(id);
+            if (type === "reply") handleReply(selectedEmail);
+            if (type === "forward") handleForward(selectedEmail);
+            if (type === "snooze") handleSnooze(id, data);
+            if (type === "toggle_read") handleReadToggle(id, data);
+          }}
+          onOpenShortcuts={() => setShortcutsOpen(true)}
+          onLabelChange={handleLabelChange}
+        />
+
+        {searchOpen && (
+          <SearchModal
+            onClose={() => setSearchOpen(false)}
+            onSelect={handleSearchSelect}
+          />
+        )}
+
+        {isComposing && (
+          <ComposeModal
+            initialData={composeData}
+            onSend={handleSend}
+            onClose={() => setIsComposing(false)}
+          />
+        )}
+      </GmailGuard>
     </div>
   );
 }

@@ -2,6 +2,7 @@ require("dotenv").config("../../.env");
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const { google } = require("googleapis");
 const authenticateToken = require("./auth.middleware");
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -10,12 +11,83 @@ const JWT_SECRET = process.env.JWT_SECRET;
 function createAuthRouter(pgPool, genAI) {
   const router = express.Router();
 
-  /**
-   * [POST] /auth/register
-   * Registers a new tenant and a new user.
-   * Body: { "email": "user@example.com", "password": "mypassword123", "name": "My Company" }
-   */
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI,
+  );
+
   router.use(express.json());
+
+  router.get("/google/connect", (req, res) => {
+    const userId = req.query.user_id;
+
+    if (!userId || userId === "undefined" || userId === "null") {
+      return res.status(400).json({ error: "Missing user_id parameter" });
+    }
+
+    const url = oauth2Client.generateAuthUrl({
+      access_type: "offline",
+      scope: [
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://mail.google.com/",
+      ],
+      state: userId,
+      prompt: "consent",
+    });
+
+    res.redirect(url);
+  });
+
+  router.get("/google/callback", async (req, res) => {
+    const { code, state } = req.query;
+    const userId = state;
+
+    if (!userId || userId === "undefined") {
+      console.error("OAuth Callback Error: Missing state (user_id)");
+      return res.redirect(
+        "http://localhost:3000/?status=failed&reason=missing_user",
+      );
+    }
+
+    try {
+      const { tokens } = await oauth2Client.getToken(code);
+      oauth2Client.setCredentials(tokens);
+
+      const oauth2 = google.oauth2({ version: "v2", auth: oauth2Client });
+      const userInfo = await oauth2.userinfo.get();
+
+      const { email, name, picture } = userInfo.data;
+
+      await pgPool.query(
+        `INSERT INTO google_tokens (user_id, email, refresh_token, access_token, expiry_date)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (user_id) DO UPDATE 
+         SET refresh_token = EXCLUDED.refresh_token, 
+             access_token = EXCLUDED.access_token,
+             expiry_date = EXCLUDED.expiry_date,
+             email = EXCLUDED.email`,
+        [
+          userId,
+          email,
+          tokens.refresh_token,
+          tokens.access_token,
+          tokens.expiry_date,
+        ],
+      );
+
+      await pgPool.query(
+        `UPDATE users SET name = $1, avatar_url = $2 WHERE user_id = $3`,
+        [name, picture, userId],
+      );
+
+      res.redirect(`http://localhost:3000/?status=connected&email=${email}`);
+    } catch (error) {
+      console.error("OAuth Error:", error);
+      res.redirect("http://localhost:3000/?status=failed");
+    }
+  });
+
   router.post("/register", async (req, res) => {
     const { email, password, name } = req.body;
 
@@ -27,28 +99,19 @@ function createAuthRouter(pgPool, genAI) {
 
     let client;
     try {
-      // --- Step 1: Hash the password ---
-      // We use a "salt" of 10 rounds, which is a standard, secure setting.
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
 
-      // --- Step 2: Start a database transaction ---
-      // A transaction is all-or-nothing. If creating the user fails,
-      // we'll "roll back" and undo the tenant creation.
-      // This prevents orphaned data.
-      client = await pgPool.connect();
-      await client.query("BEGIN");
+      client = await pgPool.connect;
 
-      // --- Step 3: Create the new Tenant ---
       const tenantQuery = `INSERT INTO tenants (name) VALUES ($1) RETURNING tenant_id`;
       const tenantRes = await client.query(tenantQuery, [name]);
       const newTenantId = tenantRes.rows[0].tenant_id;
 
-      // --- Step 4: Create the new User, linked to the tenant ---
       const userQuery = `
         INSERT INTO users (tenant_id, email, hashed_password) 
         VALUES ($1, $2, $3) 
-        RETURNING user_id, email
+        RETURNING user_id, email, tenant_id
       `;
       const userRes = await client.query(userQuery, [
         newTenantId,
@@ -56,22 +119,34 @@ function createAuthRouter(pgPool, genAI) {
         hashedPassword,
       ]);
 
-      // --- Step 5: Commit the transaction ---
-      // Both queries succeeded, so we "save" our changes.
+      const newUser = userRes.rows[0];
+
       await client.query("COMMIT");
 
       res.status(201).json({
         message: "User registered successfully!",
-        user: userRes.rows[0],
+        // Generate Token
+        token: jwt.sign(
+          {
+            user_id: newUser.user_id,
+            tenant_id: newUser.tenant_id,
+            email: newUser.email,
+          },
+          JWT_SECRET,
+          { expiresIn: "1d" },
+        ),
+        user: {
+          id: newUser.user_id,
+          email: newUser.email,
+          name: name,
+          is_gmail_connected: false,
+        },
       });
     } catch (error) {
-      // --- Step 6: Rollback on error ---
-      // If anything failed, undo all changes from this block.
       if (client) {
         await client.query("ROLLBACK");
       }
 
-      // Check for a "unique constraint" error (i.e., email already exists)
       if (error.code === "23505") {
         return res
           .status(409)
@@ -81,7 +156,6 @@ function createAuthRouter(pgPool, genAI) {
       console.error("Error during registration:", error);
       res.status(500).json({ error: "Registration failed." });
     } finally {
-      // --- Step 7: Always release the client ---
       if (client) {
         client.release();
       }
@@ -120,9 +194,12 @@ function createAuthRouter(pgPool, genAI) {
         return res.status(401).json({ error: "Invalid email or password." });
       }
 
-      // --- Step 3: Create the JWT ---
-      // This is the "payload" of the token. We include the user and tenant IDs
-      // so our API knows who is making the request.
+      const tokenCheck = await pgPool.query(
+        "SELECT 1 FROM google_tokens WHERE user_id = $1",
+        [user.user_id],
+      );
+      const isGmailConnected = tokenCheck.rows.length > 0;
+
       const payload = {
         user: {
           id: user.user_id,
@@ -131,13 +208,17 @@ function createAuthRouter(pgPool, genAI) {
         },
       };
 
-      // Sign the token. It will expire in 1 day ('1d').
       const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "1d" });
 
-      // --- Step 4: Send the token to the user ---
       res.json({
         message: "Login successful!",
         token: token,
+        user: {
+          id: user.user_id,
+          name: user.name,
+          email: user.email,
+          is_gmail_connected: isGmailConnected,
+        },
       });
     } catch (error) {
       console.error("Error during login:", error);
@@ -155,16 +236,25 @@ function createAuthRouter(pgPool, genAI) {
       // The middleware decodes the token, and your token has a 'user' property inside.
       const userId = req.user.id;
 
-      const result = await pgPool.query(
-        "SELECT name, settings FROM users WHERE user_id = $1",
-        [userId]
+      const userResult = await pgPool.query(
+        "SELECT name, avatar_url, settings FROM users WHERE user_id = $1",
+        [userId],
       );
 
-      const row = result.rows[0];
-      console.log("erq");
+      const tokenResult = await pgPool.query(
+        "SELECT email FROM google_tokens WHERE user_id = $1",
+        [userId],
+      );
+
+      const userRow = userResult.rows[0];
+      const tokenRow = tokenResult.rows[0];
+
       res.json({
-        name: row?.name || "",
-        ...(row?.settings || {}),
+        name: userRow?.name || "",
+        avatar_url: userRow?.avatar_url || "",
+        ...(userRow?.settings || {}),
+        is_gmail_connected: !!tokenRow,
+        connected_email: tokenRow?.email || null,
       });
     } catch (err) {
       console.error(err);
@@ -195,7 +285,7 @@ function createAuthRouter(pgPool, genAI) {
         if (Object.keys(jsonSettings).length > 0) {
           await client.query(
             "UPDATE users SET settings = COALESCE(settings, '{}'::jsonb) || $1::jsonb WHERE user_id = $2",
-            [JSON.stringify(jsonSettings), userId]
+            [JSON.stringify(jsonSettings), userId],
           );
         }
 
