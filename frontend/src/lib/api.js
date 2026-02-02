@@ -1,7 +1,6 @@
-// lib/api.js
 import axios from "axios";
 
-// Ensure this matches your backend port (3001 based on your index.js)
+// Ensure this matches your backend port
 const API_URL = "http://localhost:3001";
 
 const api = axios.create({
@@ -11,8 +10,7 @@ const api = axios.create({
   },
 });
 
-// --- Request Interceptor ---
-// Automatically injects the JWT token from localStorage into every request
+// Automatically injects the JWT token into every request
 api.interceptors.request.use(
   (config) => {
     if (typeof window !== "undefined") {
@@ -23,22 +21,28 @@ api.interceptors.request.use(
     }
     return config;
   },
-  (error) => Promise.reject(error)
+  (error) => Promise.reject(error),
 );
 
-// --- Response Interceptor ---
-// Handles 401 (Unauthorized) errors globally
+// Handles 401/403 errors globally
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response && error.response.status === 401) {
-      console.warn("[API] Unauthorized. Token invalid or expired.");
-      // Optional: Clear token if you want auto-logout behavior
-      // localStorage.removeItem('mailWise_token');
-      // window.location.reload();
+    if (
+      error.response &&
+      (error.response.status === 401 || error.response.status === 403)
+    ) {
+      console.warn("[API] Session expired. Logging out...");
+
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("mailWise_token");
+        localStorage.removeItem("mailWise_user_name");
+
+        window.location.href = "/";
+      }
     }
     return Promise.reject(error);
-  }
+  },
 );
 
 export default api;

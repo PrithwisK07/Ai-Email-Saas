@@ -32,7 +32,7 @@ function createIngestionRouter(pgPool) {
     try {
       const userRes = await pgPool.query(
         "SELECT last_synced_at FROM users WHERE user_id = $1",
-        [user_id]
+        [user_id],
       );
 
       const lastSync = userRes.rows[0]?.last_synced_at;
@@ -42,12 +42,12 @@ function createIngestionRouter(pgPool) {
         sinceDate = new Date(lastSync);
         sinceDate.setDate(sinceDate.getDate() - 1);
         console.log(
-          `[📅] Memory found. Syncing since: ${sinceDate.toISOString()}`
+          `[📅] Memory found. Syncing since: ${sinceDate.toISOString()}`,
         );
       } else {
-        sinceDate = new Date("2025-12-28"); // Default start
+        sinceDate = new Date("2026-01-29"); // Default start
         console.log(
-          `[📅] First sync. Defaulting to: ${sinceDate.toISOString()}`
+          `[📅] First sync. Defaulting to: ${sinceDate.toISOString()}`,
         );
       }
 
@@ -90,7 +90,7 @@ function createIngestionRouter(pgPool) {
               return reject(new Error("Error opening INBOX: " + err.message));
 
             console.log(
-              `[🔎] Searching IMAP for emails SINCE ${searchDateStr}...`
+              `[🔎] Searching IMAP for emails SINCE ${searchDateStr}...`,
             );
 
             imap.search(["ALL", ["SINCE", searchDateStr]], (err, results) => {
@@ -120,7 +120,7 @@ function createIngestionRouter(pgPool) {
 
                       if (isMassMail) {
                         console.log(
-                          `[🚫] Skipping Mass Mail echo: ${parsed.subject}`
+                          `[🚫] Skipping Mass Mail echo: ${parsed.subject}`,
                         );
                         return;
                       }
@@ -165,7 +165,7 @@ function createIngestionRouter(pgPool) {
               });
 
               f.once("error", (err) =>
-                reject(new Error("Fetch error: " + err.message))
+                reject(new Error("Fetch error: " + err.message)),
               );
               f.once("end", () => {
                 imap.end();
@@ -176,7 +176,7 @@ function createIngestionRouter(pgPool) {
         });
 
         imap.once("error", (err) =>
-          reject(new Error("IMAP connection error: " + err.message))
+          reject(new Error("IMAP connection error: " + err.message)),
         );
         imap.connect();
       });
@@ -193,7 +193,7 @@ function createIngestionRouter(pgPool) {
 
       await pgPool.query(
         "UPDATE users SET last_synced_at = NOW() WHERE user_id = $1",
-        [user_id]
+        [user_id],
       );
       console.log(`[💾] Memory updated.`);
 
@@ -218,7 +218,7 @@ function createIngestionRouter(pgPool) {
       // 1. GET USER SETTINGS (Default to 30 days if not set)
       const userRes = await pgPool.query(
         "SELECT settings FROM users WHERE user_id = $1",
-        [user_id]
+        [user_id],
       );
       const retentionDays =
         userRes.rows[0]?.settings?.trash_retention_days || 30;
@@ -232,7 +232,7 @@ function createIngestionRouter(pgPool) {
              WHERE status = 'trash' 
              AND updated_at < NOW() - INTERVAL '${retentionDays} days' 
              AND tenant_id = $1`,
-          [tenant_id]
+          [tenant_id],
         );
       }
 
@@ -240,7 +240,7 @@ function createIngestionRouter(pgPool) {
         `UPDATE emails 
          SET status = 'inbox', snooze_until = NULL, snoozed_at = NULL 
          WHERE status = 'snoozed' AND snooze_until < NOW() AND tenant_id = $1`,
-        [tenant_id]
+        [tenant_id],
       );
 
       const result = await pgPool.query(
@@ -262,7 +262,7 @@ function createIngestionRouter(pgPool) {
          FROM emails 
          WHERE tenant_id = $1 
          ORDER BY sent_at DESC;`,
-        [tenant_id]
+        [tenant_id],
       );
 
       const emails = result.rows.map((row) => ({
