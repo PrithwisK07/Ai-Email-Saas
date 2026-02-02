@@ -28,39 +28,56 @@ function createAiRouter(pgPool, weaviateClient, genAI) {
   router.get("/search", async (req, res) => {
     try {
       const q = req.query.search;
-      const { tenant_id } = req.user; // Get tenant_id from the token
+      const { tenant_id } = req.user;
 
       if (!q) {
         return res.status(400).json({ error: "Missing 'search' query param" });
       }
 
-      console.log(`[🔍] Received HYBRID search for tenant: ${tenant_id}`);
+      console.log(`[🔍] Search Query: "${q}" (Tenant: ${tenant_id})`);
 
-      // --- Step 1: Run all three searches in parallel ---
-      const [semanticResults, keywordResults, literalResults] =
-        await Promise.all([
-          runSemanticSearch(q, tenant_id),
-          runKeywordSearch(q, tenant_id),
-          runLiteralSearch(q, tenant_id), // For email addresses
-        ]);
+      // --- Tier 1: Fast & Precise (Literal + Keyword) ---
+      // We run these first because they are cheap (Postgres) and highly relevant.
+      const [keywordResults, literalResults] = await Promise.all([
+        runKeywordSearch(q, tenant_id),
+        runLiteralSearch(q, tenant_id),
+      ]);
 
-      // --- Step 2: Merge and Re-rank results ---
-      const finalResults = mergeResults(
-        semanticResults,
-        keywordResults,
-        literalResults
-      );
+      // Merge Tier 1 results immediately to check count
+      let combinedResults = mergeResults([], keywordResults, literalResults);
 
-      if (finalResults.length === 0) {
-        console.log("⚠️ No matching results found for this tenant.");
+      console.log(`[📊] Tier 1 Hits: ${combinedResults.length}`);
+
+      // --- Tier 2: Semantic Fallback ---
+      // Only run expensive Vector search if we don't have enough exact matches.
+      const SEARCH_THRESHOLD = 5;
+
+      if (combinedResults.length < SEARCH_THRESHOLD) {
+        console.log(
+          "[🧠] Tier 1 yielded low results. Engaging Semantic Search...",
+        );
+        const semanticResults = await runSemanticSearch(q, tenant_id);
+
+        // Merge again (Helper handles deduplication based on ID)
+        combinedResults = mergeResults(
+          semanticResults,
+          keywordResults,
+          literalResults,
+        );
+      } else {
+        console.log("[⚡] Tier 1 sufficient. Skipping Semantic Search.");
+      }
+
+      if (combinedResults.length === 0) {
         return res.json([]);
       }
 
-      // --- Step 3: Hydrate results with full email data ---
-      // finalResults is now a list of full email objects, no re-fetch needed.
+      // --- Final Sorting: Timeline (Newest First) ---
+      // Users usually want the most recent context for their query.
+      combinedResults.sort((a, b) => new Date(b.sent_at) - new Date(a.sent_at));
 
-      console.log(`[✅] Found ${finalResults.length} matching emails.`);
-      res.json(finalResults);
+      console.log(`[✅] Returning ${combinedResults.length} sorted emails.`);
+      res.json(combinedResults);
     } catch (e) {
       console.error("❌ Error in /search route:", e.message);
       res.status(500).send(e.message);
@@ -76,7 +93,7 @@ function createAiRouter(pgPool, weaviateClient, genAI) {
     const { tenant_id } = req.user;
 
     console.log(
-      `[✨] Received summarization request for email: ${emailId} (Tenant: ${tenant_id})`
+      `[✨] Received summarization request for email: ${emailId} (Tenant: ${tenant_id})`,
     );
 
     try {
@@ -88,7 +105,7 @@ function createAiRouter(pgPool, weaviateClient, genAI) {
       try {
         const dbResult = await pgClient.query(
           "SELECT body_text FROM emails WHERE email_id = $1 AND tenant_id = $2",
-          [emailId, tenant_id]
+          [emailId, tenant_id],
         );
 
         if (dbResult.rows.length === 0) {
@@ -174,7 +191,7 @@ function createAiRouter(pgPool, weaviateClient, genAI) {
         } catch (flashErr) {
           console.error(
             "[❌] gemini-2.5-flash ALSO failed. Error:",
-            flashErr.message
+            flashErr.message,
           );
           return res.status(500).json({
             error: "Both Pro and Flash summarization failed.",
@@ -202,7 +219,7 @@ function createAiRouter(pgPool, weaviateClient, genAI) {
     }
 
     console.log(
-      `[🤖] Received AI draft request for tenant: ${tenant_id} (Auto-send: ${!!auto_send})`
+      `[🤖] Received AI draft request for tenant: ${tenant_id} (Auto-send: ${!!auto_send})`,
     );
 
     // --- Step 1: Define the structured JSON output ---
@@ -367,11 +384,11 @@ function createAiRouter(pgPool, weaviateClient, genAI) {
       const hybridResults = mergeResults(
         semanticResults,
         keywordResults,
-        literalResults
+        literalResults,
       );
 
-      // Get the *full text* from the top 5 results
-      const topEmails = hybridResults.slice(0, 5);
+      // Get the *full text* from the top 8 results
+      const topEmails = hybridResults.slice(0, 8);
 
       if (topEmails.length === 0) {
         console.log("⚠️ No context found for this query.");
@@ -382,58 +399,91 @@ function createAiRouter(pgPool, weaviateClient, genAI) {
       }
 
       // --- Step 2: Augment (Combine) the full email texts into context ---
-      const context = topEmails
-        .map(
-          (email) => `
-          From: ${email.sender}
-          Subject: ${email.subject}
-          Body:
-          ${email.body_text} 
-        `
-        )
-        .join("\n\n--- [End of Email] ---\n\n");
+      const contextBlock = topEmails
+        .map((email) => {
+          // Format date to be human-readable (e.g., "Mon, Feb 2, 2026")
+          const dateStr = new Date(email.sent_at).toLocaleDateString("en-US", {
+            weekday: "short",
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+
+          return `
+            [EMAIL START]
+            ID: ${email.id}
+            Date: ${dateStr}
+            From: ${email.sender}
+            To: ${email.recipients || "Me"}
+            Subject: ${email.subject}
+            Content:
+            ${email.body_text}
+            [EMAIL END]
+          `;
+        })
+        .join("\n\n");
+
+      const currentDate = new Date().toLocaleDateString("en-US", {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
 
       // --- Step 3: Generate the answer with Gemini Pro ---
       console.log("Sending context and query to Gemini Pro...");
 
       const prompt = `
-You are an advanced AI assistant. You MUST base your answer strictly and exclusively 
-on the information provided in the CONTEXT below.
+      You MUST answer the user's question strictly and exclusively based on the provided CONTEXT.
 
-Your job is to create a **detailed, thorough, well-structured** answer — 
-not a short one-liner — *as long as the required details exist inside the context*.
+      Do NOT use outside knowledge.
+      Do NOT guess.
+      Do NOT infer beyond what is explicitly written.
+      Do NOT hallucinate.
 
-REQUIREMENTS:
-1. If the context contains enough information, provide:
-   - A detailed explanation
-   - Supporting details, references, or quotes from the context
-   - Clear reasoning steps
-   - Any relevant breakdowns or clarifications
+      CURRENT TIME:
+      ${currentDate}
+      Use this only to resolve relative date references (e.g., "yesterday", "last week") using email metadata.
 
-2. If the context does NOT contain enough information to answer the question, 
-   you MUST respond exactly with:
-   **"I'm sorry, I couldn't find that information in your emails."**
+      RULES:
 
-3. You are NOT allowed to use outside knowledge or guess.
+      1. Context-only answering
+        - Your answer must be fully supported by the provided context.
+        - Every claim must be traceable to the context text.
 
-4. Expand your answer ONLY to the degree supported by the context. Be detailed 
-   but grounded strictly in the text.
+      2. If the context contains enough information:
+        - Provide a detailed, well-structured answer.
+        - Explain the reasoning step-by-step.
+        - Include relevant details or quotes from the context when applicable.
+        - When referencing a specific email, cite its Sender or Subject.
+        - Pay close attention to dates, participants, and email metadata.
 
----
+      3. If the context does NOT contain enough information:
+        - Respond exactly with:
+          "I'm sorry, I couldn't find that information in your emails."
+        - Do not add anything else.
 
-CONTEXT:
-------
-${context}
-------
+      4. Expansion constraint
+        - Expand the answer only to the degree supported by the context.
+        - Do not introduce new facts, assumptions, or interpretations.
 
-USER'S QUESTION:
-${query}
+      INPUT FORMAT:
 
----
+      CONTEXT:
+      ------
+      ${contextBlock}
+      ------
 
-Now produce the best possible answer following the rules above.
-ANSWER:
-`;
+      USER QUESTION:
+      ${query}
+
+      OUTPUT:
+      Provide the best possible answer following all rules above.
+      `;
 
       let summary;
       try {
@@ -458,7 +508,7 @@ ANSWER:
         } catch (flashErr) {
           console.error(
             "[❌] gemini-2.5-flash ALSO failed. Error:",
-            flashErr.message
+            flashErr.message,
           );
           return res.status(500).json({
             error: "Both Pro and Flash summarization failed.",
@@ -510,17 +560,17 @@ ANSWER:
 
       // 4. DEBUG LOG: Check what we read
       console.log(
-        `[📝] Extracted Text Length: ${textContent.length} characters`
+        `[📝] Extracted Text Length: ${textContent.length} characters`,
       );
       if (textContent.length > 0) {
         console.log(
           `[📝] Preview: "${textContent
             .substring(0, 50)
-            .replace(/\n/g, " ")}..."`
+            .replace(/\n/g, " ")}..."`,
         );
       } else {
         console.warn(
-          "⚠️ Text content is empty! File might be empty or encoding issue."
+          "⚠️ Text content is empty! File might be empty or encoding issue.",
         );
       }
 
@@ -612,12 +662,14 @@ ANSWER:
 
   // --- HELPER FUNCTIONS (ALL UPDATED) ---
   async function runSemanticSearch(queryTxt, tenantId) {
-    let semanticChunks = [];
+    // Only run if query is long enough to have semantic meaning
+    if (queryTxt.length < 3) return [];
+
     try {
       const collection = weaviateClient.collections.get(WEAVIATE_CLASS_NAME);
       const searchResults = await collection.query.nearText(queryTxt, {
         limit: 10,
-        returnProperties: ["email_id", "chunk_text", "from", "subject"], // Get all properties
+        returnProperties: ["email_id", "chunk_text"],
         returnMetadata: ["certainty"],
         where: {
           path: ["tenant_id"],
@@ -625,71 +677,69 @@ ANSWER:
           value: tenantId,
         },
       });
-      semanticChunks = searchResults.objects;
-    } catch (error) {
-      console.error("Error in semantic search:", error.message);
-      return [];
-    }
 
-    if (semanticChunks.length === 0) return [];
+      const semanticObjects = searchResults.objects;
+      if (semanticObjects.length === 0) return [];
 
-    const emailIdsToFetch = [
-      ...new Set(semanticChunks.map((obj) => obj.properties.email_id)),
-    ];
+      const emailIds = [
+        ...new Set(semanticObjects.map((o) => o.properties.email_id)),
+      ];
 
-    try {
+      // Fetch full email details
       const pgResult = await pgPool.query(
-        `SELECT email_id, subject, sender, body_html, body_text, sent_at 
+        `SELECT email_id, subject, sender, recipients, body_html, body_text, sent_at 
          FROM emails 
          WHERE email_id = ANY($1::uuid[]) AND tenant_id = $2`,
-        [emailIdsToFetch, tenantId]
+        [emailIds, tenantId],
       );
 
       return pgResult.rows.map((email) => {
-        const bestChunk = semanticChunks
-          .filter((c) => c.properties.email_id === email.email_id)
-          .sort((a, b) => b.metadata.certainty - a.metadata.certainty)[0];
-
+        // Find best chunk for snippet
+        const bestChunk = semanticObjects.find(
+          (c) => c.properties.email_id === email.email_id,
+        );
         return {
           ...email,
-          id: email.email_id,
-          score: bestChunk.metadata.certainty,
-          matching_chunk: bestChunk.properties.chunk_text,
+          id: email.email_id, // Standardize ID
+          search_source: "semantic", // Debugging tag
+          matching_chunk: bestChunk ? bestChunk.properties.chunk_text : "",
         };
       });
-    } catch (pgError) {
-      console.error("Error hydrating semantic results:", pgError.message);
+    } catch (error) {
+      console.error("Error in semantic search:", error.message);
       return [];
     }
   }
 
   async function runKeywordSearch(queryTxt, tenantId) {
     try {
-      const tsQuery = queryTxt.split(" ").join(" & ");
       const pgClient = await pgPool.connect();
       try {
+        // Using `websearch_to_tsquery` is smarter than split/join.
+        // It handles quotes and logic (e.g., "invoice -paid") automatically.
         const query = `
           SELECT
             email_id,
             subject,
             sender,
+            recipients,
             body_html,
             body_text,
             sent_at,
-            ts_rank_cd(tsv_body, to_tsquery('english', $1)) AS score,
-            ts_headline('english', body_text, to_tsquery('english', $1)) AS matching_chunk
+            ts_headline('english', body_text, websearch_to_tsquery('english', $1)) AS matching_chunk
           FROM emails
           WHERE
             tenant_id = $2 AND
-            tsv_body @@ to_tsquery('english', $1)
-          ORDER BY score DESC
-          LIMIT 10;
+            tsv_body @@ websearch_to_tsquery('english', $1)
+          ORDER BY sent_at DESC
+          LIMIT 20; 
         `;
-        const res = await pgClient.query(query, [tsQuery, tenantId]);
+        const res = await pgClient.query(query, [queryTxt, tenantId]);
 
         return res.rows.map((row) => ({
           ...row,
           id: row.email_id,
+          search_source: "keyword",
         }));
       } finally {
         pgClient.release();
@@ -701,34 +751,43 @@ ANSWER:
   }
 
   async function runLiteralSearch(queryTxt, tenantId) {
-    if (!queryTxt.includes("@") && !queryTxt.includes(".")) {
-      return [];
-    }
+    // 1. If it looks like an email, search Sender/Recipients
+    const isEmail = queryTxt.includes("@");
 
     try {
       const pgClient = await pgPool.connect();
       try {
-        const query = `
-          SELECT
-            email_id,
-            subject,
-            sender,
-            body_html,
-            body_text,
-            sent_at,
-            0.5 AS score, 
-            ts_headline('english', body_text, to_tsquery('english', $2)) AS matching_chunk
-          FROM emails e
-          WHERE
-            tenant_id = $1 AND
-            (sender ILIKE $2 OR body_text ILIKE $2)
-          LIMIT 5;
-        `;
-        const res = await pgClient.query(query, [tenantId, `%${queryTxt}%`]);
+        let query;
+        let params;
+
+        if (isEmail) {
+          // Strict sender search
+          query = `
+                SELECT email_id, subject, sender, recipients, body_html, body_text, sent_at
+                FROM emails 
+                WHERE tenant_id = $1 AND sender ILIKE $2
+                ORDER BY sent_at DESC LIMIT 10
+            `;
+          params = [tenantId, `%${queryTxt}%`];
+        } else {
+          // Strict Subject search
+          query = `
+                SELECT email_id, subject, sender, body_html, body_text, sent_at
+                FROM emails 
+                WHERE tenant_id = $1 AND subject ILIKE $2
+                ORDER BY sent_at DESC LIMIT 10
+            `;
+          params = [tenantId, `%${queryTxt}%`];
+        }
+
+        const res = await pgClient.query(query, params);
 
         return res.rows.map((row) => ({
           ...row,
           id: row.email_id,
+          search_source: "literal",
+          // For literal matches, the "chunk" is just the start of the body or subject
+          matching_chunk: `Matched: ${row.subject}`,
         }));
       } finally {
         pgClient.release();
@@ -739,24 +798,27 @@ ANSWER:
     }
   }
 
+  // Refined Merge Function
   function mergeResults(semantic, keyword, literal) {
     const combined = new Map();
 
-    // Add in order of priority (most important last)
-    for (const result of keyword) {
-      combined.set(result.email_id, result);
-    }
-    for (const result of semantic) {
-      combined.set(result.email_id, result);
-    }
-    for (const result of literal) {
-      combined.set(result.email_id, result);
-    }
+    // Helper to add items to map (if not exists)
+    const addList = (list) => {
+      list.forEach((item) => {
+        if (!combined.has(item.id)) {
+          combined.set(item.id, item);
+        }
+      });
+    };
 
-    const finalResults = Array.from(combined.values());
-    finalResults.sort((a, b) => b.score - a.score);
+    // Priority Order: Literal -> Keyword -> Semantic
+    // (We add them in this order so the "source" tag respects priority)
+    addList(literal);
+    addList(keyword);
+    addList(semantic);
 
-    return finalResults;
+    // Convert to array (Sorting happens in the main route handler now)
+    return Array.from(combined.values());
   }
 
   return router;

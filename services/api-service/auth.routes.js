@@ -102,7 +102,7 @@ function createAuthRouter(pgPool, genAI) {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
 
-      client = await pgPool.connect;
+      client = await pgPool.connect();
 
       const tenantQuery = `INSERT INTO tenants (name) VALUES ($1) RETURNING tenant_id`;
       const tenantRes = await client.query(tenantQuery, [name]);
