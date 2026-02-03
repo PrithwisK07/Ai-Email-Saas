@@ -33,7 +33,7 @@ function createDraftsRouter(pgPool) {
 
       const check = await pgPool.query(
         "SELECT 1 FROM emails WHERE email_id = $1",
-        [emailId]
+        [emailId],
       );
 
       if (check.rowCount > 0) {
@@ -54,7 +54,7 @@ function createDraftsRouter(pgPool) {
             meta,
             recipientsString,
             emailId,
-          ]
+          ],
         );
       } else {
         console.log("📝 Creating new draft:", emailId);
@@ -69,14 +69,14 @@ function createDraftsRouter(pgPool) {
             emailId,
             internalId,
             subject || "(Draft)",
-            "karmakarprithwis566@gmail.com",
+            "",
             bodyText,
             html,
             new Date(),
             tenant_id,
             meta,
             recipientsString,
-          ]
+          ],
         );
       }
 
@@ -99,7 +99,7 @@ function createDraftsRouter(pgPool) {
       // Hard delete the draft row since the "Sent" copy will come in via Sync/IMAP
       const result = await pgPool.query(
         "DELETE FROM emails WHERE email_id = $1 AND tenant_id = $2",
-        [id, req.user.tenant_id]
+        [id, req.user.tenant_id],
       );
 
       if (result.rowCount === 0) {

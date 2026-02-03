@@ -3,6 +3,7 @@ const amqp = require("amqplib");
 const Imap = require("imap");
 const { simpleParser } = require("mailparser");
 const { convert } = require("html-to-text");
+const { google } = require("googleapis"); // <--- Import Google
 
 // --- Constants ---
 const RABBITMQ_URL = process.env.RABBITMQ_URL || "amqp://localhost:5672";
@@ -16,61 +17,100 @@ function formatImapDate(date) {
   });
 }
 
-// This function receives the db pool and returns a new router
+// --- HELPER: Generate XOAuth2 Token String for IMAP ---
+// IMAP requires the token in a specific Base64 format:
+// "user={email}^Aauth=Bearer {token}^A^A"
+function buildXOAuth2Token(user, accessToken) {
+  const authData = `user=${user}\x01auth=Bearer ${accessToken}\x01\x01`;
+  return Buffer.from(authData, "utf-8").toString("base64");
+}
+
 function createIngestionRouter(pgPool) {
   const router = express.Router();
 
+  // --- HELPER: Get Dynamic Gmail Credentials ---
+  async function getGmailCreds(userId) {
+    // 1. Fetch Refresh Token from DB
+    const res = await pgPool.query(
+      "SELECT email, refresh_token FROM google_tokens WHERE user_id = $1",
+      [userId],
+    );
+
+    if (res.rows.length === 0) {
+      throw new Error("Gmail not connected. Please connect in Settings.");
+    }
+
+    const { email, refresh_token } = res.rows[0];
+
+    // 2. Setup Google Client
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      process.env.GOOGLE_REDIRECT_URI,
+    );
+
+    oauth2Client.setCredentials({ refresh_token });
+
+    // 3. Get Fresh Access Token
+    // This handles the refresh automatically if the access token is expired
+    const response = await oauth2Client.getAccessToken();
+    const accessToken = response.token;
+
+    return { email, accessToken };
+  }
+
   router.post("/sync", async (req, res) => {
-    // Fix: Robust ID extraction
-    const user_id = req.user.id;
+    // Robust ID extraction
+    const user_id = req.user.id || req.user.user_id;
     const tenant_id = req.user.user?.tenant_id || req.user.tenant_id;
 
     console.log(`[+] Starting INCREMENTAL sync for User: ${user_id}`);
 
-    // --- 1. DETERMINE SYNC DATE ---
-    let searchDateStr;
     try {
+      // --- 1. GET DYNAMIC CREDENTIALS ---
+      // 👇 This replaces your hardcoded strings
+      const { email, accessToken } = await getGmailCreds(user_id);
+
+      const xoauth2Token = buildXOAuth2Token(email, accessToken);
+
+      // --- 2. DETERMINE SYNC DATE ---
+      let searchDateStr;
       const userRes = await pgPool.query(
         "SELECT last_synced_at FROM users WHERE user_id = $1",
         [user_id],
       );
 
       const lastSync = userRes.rows[0]?.last_synced_at;
-      let sinceDate;
 
       if (lastSync) {
-        sinceDate = new Date(lastSync);
-        sinceDate.setDate(sinceDate.getDate() - 1);
-        console.log(
-          `[📅] Memory found. Syncing since: ${sinceDate.toISOString()}`,
-        );
+        const sinceDate = new Date(lastSync);
+        sinceDate.setDate(sinceDate.getDate() - 1); // Overlap by 1 day for safety
+        searchDateStr = formatImapDate(sinceDate);
+        console.log(`[📅] Syncing since: ${sinceDate.toISOString()}`);
       } else {
-        sinceDate = new Date("2026-01-29"); // Default start
+        const sinceDate = new Date();
+        sinceDate.setDate(sinceDate.getDate() - 3); // Default: Last 30 days
+        searchDateStr = formatImapDate(sinceDate);
         console.log(
           `[📅] First sync. Defaulting to: ${sinceDate.toISOString()}`,
         );
       }
 
-      searchDateStr = formatImapDate(sinceDate);
-    } catch (dbErr) {
-      console.error("DB Error fetching sync date:", dbErr);
-      return res.status(500).json({ error: "Database error" });
-    }
+      // --- 3. CONFIGURE IMAP WITH OAUTH ---
+      const imapConfig = {
+        xoauth2: xoauth2Token, // <--- Use the Base64 token string
+        user: email, // <--- Still needed for identification
+        host: "imap.gmail.com",
+        port: 993,
+        tls: true,
+        authTimeout: 10000,
+        tlsOptions: { rejectUnauthorized: false },
+      };
 
-    const imapConfig = {
-      user: "karmakarprithwis566@gmail.com",
-      password: "hypc tmqc vmcb zmlx",
-      host: "imap.gmail.com",
-      port: 993,
-      tls: true,
-      authTimeout: 10000,
-      tlsOptions: { rejectUnauthorized: false },
-    };
+      // --- 4. CONNECT & FETCH ---
+      let connection;
+      let channel;
 
-    let connection;
-    let channel;
-
-    try {
       console.log("Connecting to RabbitMQ...");
       connection = await amqp.connect(RABBITMQ_URL);
       channel = await connection.createChannel();
@@ -99,7 +139,7 @@ function createIngestionRouter(pgPool) {
                 return reject(err);
               }
               if (!results || results.length === 0) {
-                console.log("[ℹ️] No new emails found since " + searchDateStr);
+                console.log("[ℹ️] No new emails found.");
                 imap.end();
                 return resolve([]);
               }
@@ -116,7 +156,7 @@ function createIngestionRouter(pgPool) {
                 msg.on("body", (stream) => {
                   simpleParser(stream, (err, parsed) => {
                     if (!err && messageUID) {
-                      const isMassMail = parsed.headers.get("x-mailwise-mass"); // http headers case insenitive
+                      const isMassMail = parsed.headers.get("x-mailwise-mass");
 
                       if (isMassMail) {
                         console.log(
@@ -135,13 +175,11 @@ function createIngestionRouter(pgPool) {
                         });
                       }
 
-                      // --- 👇 FIX: EXTRACT ATTACHMENTS 👇 ---
                       const attachments = parsed.attachments
                         ? parsed.attachments.map((att) => ({
                             filename: att.filename,
                             contentType: att.contentType,
                             size: att.size,
-                            // Convert Buffer to Base64 for JSON storage
                             content: att.content.toString("base64"),
                             encoding: "base64",
                           }))
@@ -157,7 +195,7 @@ function createIngestionRouter(pgPool) {
                         date: parsed.date,
                         textBody: cleanText,
                         htmlBody: parsed.html,
-                        attachments: attachments, // <--- Add to payload
+                        attachments: attachments,
                       });
                     }
                   });
@@ -175,12 +213,22 @@ function createIngestionRouter(pgPool) {
           });
         });
 
-        imap.once("error", (err) =>
-          reject(new Error("IMAP connection error: " + err.message)),
-        );
+        imap.once("error", (err) => {
+          // Provide a clearer error if authentication fails
+          if (err.source === "authentication") {
+            return reject(
+              new Error(
+                "IMAP Authentication Failed. Try reconnecting Gmail in settings.",
+              ),
+            );
+          }
+          reject(new Error("IMAP connection error: " + err.message));
+        });
+
         imap.connect();
       });
 
+      // --- 5. QUEUE & FINISH ---
       if (parsedEmails.length > 0) {
         console.log(`[🚀] Publishing ${parsedEmails.length} emails...`);
         parsedEmails.sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -195,7 +243,9 @@ function createIngestionRouter(pgPool) {
         "UPDATE users SET last_synced_at = NOW() WHERE user_id = $1",
         [user_id],
       );
-      console.log(`[💾] Memory updated.`);
+
+      if (channel) await channel.close();
+      if (connection) await connection.close();
 
       res.json({
         message: `Sync complete. Queued ${parsedEmails.length} new emails.`,
@@ -204,10 +254,7 @@ function createIngestionRouter(pgPool) {
       });
     } catch (error) {
       console.error("Sync Error:", error.message);
-      res.status(500).send("Sync failed: " + error.message);
-    } finally {
-      if (channel) await channel.close();
-      if (connection) await connection.close();
+      res.status(500).json({ error: error.message });
     }
   });
 

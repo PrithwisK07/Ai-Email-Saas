@@ -55,9 +55,10 @@ export default function MailWiseMailPage() {
 
         const updatedUser = {
           ...user,
-          is_gmail_connected: true,
-          name: freshSettings.name,
+          is_gmail_connected: freshSettings.is_gmail_connected,
+          connected_email: freshSettings.connected_email,
           avatar_url: freshSettings.avatar_url,
+          name: freshSettings.name,
         };
 
         setUser(updatedUser);
@@ -123,25 +124,25 @@ export default function MailWiseMailPage() {
 
           const freshSettings = await AuthService.getSettings();
 
-          if (
-            freshSettings.is_gmail_connected !== parsedUser.is_gmail_connected
-          ) {
-            console.log("⚠️ Syncing Gmail Status with DB...");
+          const updatedUser = {
+            ...parsedUser,
+            is_gmail_connected: freshSettings.is_gmail_connected,
+            connected_email: freshSettings.connected_email,
+            avatar_url: freshSettings.avatar_url,
+            name: freshSettings.name,
+          };
 
-            const updatedUser = {
-              ...parsedUser,
-              is_gmail_connected: freshSettings.is_gmail_connected,
-            };
+          console.log("⚠️ Syncing Gmail Status with DB...");
 
-            setUser(updatedUser);
-            localStorage.setItem(
-              "mailWise_user_name",
-              JSON.stringify(updatedUser),
-            );
+          setUser(updatedUser);
 
-            if (!freshSettings.is_gmail_connected) {
-              toast.error("Gmail disconnected. Please reconnect.");
-            }
+          localStorage.setItem(
+            "mailWise_user_name",
+            JSON.stringify(updatedUser),
+          );
+
+          if (!freshSettings.is_gmail_connected) {
+            toast.error("Gmail disconnected. Please reconnect.");
           }
         } catch (e) {
           console.error("Auth Validation Failed:", e);
@@ -162,7 +163,9 @@ export default function MailWiseMailPage() {
   const loadEmailsFromBackend = async () => {
     try {
       const rawData = await EmailService.list();
-      const MY_EMAIL = "karmakarprithwis566@gmail.com";
+      const MY_EMAIL = JSON.parse(
+        localStorage.getItem("mailWise_user_name"),
+      ).connected_email;
       const seenIds = new Set();
 
       const formatted = rawData.reduce((acc, email) => {

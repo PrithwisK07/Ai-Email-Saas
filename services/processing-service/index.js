@@ -30,7 +30,6 @@ async function main() {
     await rabbitChannel.assertQueue(QUEUE_NAME, { durable: true });
     await rabbitChannel.assertQueue(EMBEDDING_QUEUE_NAME, { durable: true });
 
-    // We can increase prefetch now because processing is instant
     rabbitChannel.prefetch(10);
 
     console.log("✅ RabbitMQ connected. Waiting for emails...");
@@ -44,21 +43,20 @@ async function main() {
           const emailData = JSON.parse(msg.content.toString());
           const { tenant_id, attachments } = emailData;
 
-          // 1. Check DB for Duplicates (Idempotency)
+          const safeSubject = emailData.subject || "(No Subject)";
+
           const dbClient = await dbPool.connect();
           try {
             const checkRes = await dbClient.query(
               "SELECT 1 FROM emails WHERE internal_message_id = $1",
-              [emailData.internal_message_id]
+              [emailData.internal_message_id],
             );
 
             if (checkRes.rowCount > 0) {
               console.log(
-                `[🟡] Duplicate: "${emailData.subject.substring(0, 30)}..."`
+                `[🟡] Duplicate: "${safeSubject.substring(0, 30)}..."`,
               );
             } else {
-              // 2. Insert IMMEDIATELY (Skip AI)
-              // We default intent to 'none' or 'new' to be processed later if needed
               const aiMetadata = {
                 intent: "none",
                 status: "unprocessed",
@@ -72,7 +70,7 @@ async function main() {
                 [
                   null,
                   emailData.internal_message_id,
-                  emailData.subject || "No Subject",
+                  safeSubject,
                   emailData.from || "No Sender",
                   emailData.recipient || "",
                   emailData.textBody || "",
@@ -80,30 +78,27 @@ async function main() {
                   emailData.date || new Date(),
                   tenant_id,
                   JSON.stringify(aiMetadata),
-                ]
+                ],
               );
 
               const newEmailId = insertRes.rows[0].email_id;
               console.log(
-                `[✅] Inserted: "${emailData.subject.substring(0, 30)}..."`,
-                ` ${emailData.recipient}`
+                `[✅] Inserted: "${safeSubject.substring(0, 30)}..."`,
+                ` ${emailData.recipient}`,
               );
 
-              // 3. Publish to Embedding Queue (This is fast enough to keep)
               const embeddingMsg = {
                 email_id: newEmailId,
                 body_text: emailData.textBody,
                 tenant_id: tenant_id,
-                subject: emailData.subject,
+                subject: safeSubject,
                 from: emailData.from,
               };
 
               rabbitChannel.sendToQueue(
                 EMBEDDING_QUEUE_NAME,
                 Buffer.from(JSON.stringify(embeddingMsg)),
-                {
-                  persistent: true,
-                }
+                { persistent: true },
               );
             }
           } finally {
@@ -113,12 +108,18 @@ async function main() {
           rabbitChannel.ack(msg);
         } catch (error) {
           console.error(`[❌] Error: ${error.message}`);
-          // If it's a JSON parse error, don't requeue (it will fail again)
-          // valid JSON but DB error? requeue.
-          rabbitChannel.nack(msg, false, true);
+
+          const isFatal =
+            error instanceof SyntaxError || error.message.includes("undefined");
+          if (isFatal) {
+            console.log("[🗑️] Discarding bad message to prevent loop.");
+            rabbitChannel.ack(msg);
+          } else {
+            rabbitChannel.nack(msg, false, true);
+          }
         }
       },
-      { noAck: false }
+      { noAck: false },
     );
   } catch (error) {
     console.error("Fatal Error:", error.message);
