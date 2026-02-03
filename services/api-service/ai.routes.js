@@ -13,14 +13,6 @@ function createAiRouter(pgPool, weaviateClient, genAI) {
   const router = express.Router();
   const WEAVIATE_CLASS_NAME = "EmailChunks";
 
-  const transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: "karmakarprithwis566@gmail.com",
-      pass: "hypc tmqc vmcb zmlx",
-    },
-  });
-
   /**
    * [GET] /ai/search
    * Performs SECURE HYBRID search
@@ -311,47 +303,6 @@ function createAiRouter(pgPool, weaviateClient, genAI) {
     const draftJson = JSON.parse(rawText);
 
     console.log(`[✅] Draft generated successfully.`);
-
-    // --- Step 4: Handle Auto-Send ---
-    if (auto_send === true) {
-      // Safety Check: Do we have a recipient?
-      if (!draftJson.to || draftJson.to.length === 0) {
-        console.log("[⚠️] Auto-send requested but no recipient found by AI.");
-        return res.json({
-          ...draftJson,
-          auto_send_status: "failed",
-          error: "AI could not identify a 'to' address from your prompt.",
-        });
-      }
-
-      console.log(`[🚀] Auto-sending email to: ${draftJson.to.join(", ")}`);
-
-      try {
-        const info = await transporter.sendMail({
-          from: '"AI Email Assistant" <karmakarprithwis566@gmail.com>',
-          to: draftJson.to.join(", "),
-          cc: draftJson.cc ? draftJson.cc.join(", ") : undefined,
-          bcc: draftJson.bcc ? draftJson.bcc.join(", ") : undefined,
-          subject: draftJson.subject,
-          html: draftJson.body,
-        });
-
-        console.log(`[✅] Email sent! Message ID: ${info.messageId}`);
-
-        return res.json({
-          ...draftJson,
-          auto_send_status: "success",
-          messageId: info.messageId,
-        });
-      } catch (sendError) {
-        console.error("Error sending email:", sendError);
-        return res.json({
-          ...draftJson,
-          auto_send_status: "failed",
-          error: sendError.message,
-        });
-      }
-    }
 
     // If not auto-sending, just return the draft for review
     res.json(draftJson);

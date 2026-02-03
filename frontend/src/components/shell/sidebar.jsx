@@ -27,10 +27,11 @@ export default function Sidebar({
     useEffect(() => {
         // 1. Initial Load from LocalStorage
         const loadUser = () => {
-            const storedUser = localStorage.getItem("mailWise_user_name"); // Note: You might want to rename this key to 'mailWise_user' eventually since it stores the whole obj
+            const storedUser = localStorage.getItem("mailWise_user_name");
             if (storedUser) {
                 try {
                     const parsed = JSON.parse(storedUser);
+
                     setUser(parsed);
                 } catch (e) {
                     console.error("Failed to parse user in sidebar", e);
@@ -215,8 +216,8 @@ export default function Sidebar({
                     >
                         {/* Avatar Image or Initials */}
                         <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-xs font-bold text-white shadow-lg shadow-indigo-500/20 flex-shrink-0 overflow-hidden">
-                            {user?.avatar_url ? (
-                                <img src={user.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+                            {JSON.parse(localStorage.getItem("mailWise_user_name")).avatar_url ? (
+                                <img src={JSON.parse(localStorage.getItem("mailWise_user_name")).avatar_url} alt={JSON.parse(localStorage.getItem("mailWise_user_name")).avatar_url} className="w-full h-full object-cover" />
                             ) : (
                                 <span>{(user?.name || "U").charAt(0).toUpperCase()}</span>
                             )}
@@ -226,10 +227,10 @@ export default function Sidebar({
                             <>
                                 <div className="flex-1 min-w-0 text-left animate-in fade-in duration-300">
                                     <p className="text-sm font-medium text-zinc-200 truncate group-hover:text-white">
-                                        {user?.name || "User"}
+                                        {JSON.parse(localStorage.getItem("mailWise_user_name")).name || "User"}
                                     </p>
                                     <p className="text-[10px] text-zinc-500 truncate">
-                                        {user?.email || ""}
+                                        {JSON.parse(localStorage.getItem("mailWise_user_name")).email || ""}
                                     </p>
                                 </div>
                                 <ChevronUp size={14} className={`text-zinc-600 transition-transform flex-shrink-0 ${profileOpen ? 'rotate-180' : ''}`} />
