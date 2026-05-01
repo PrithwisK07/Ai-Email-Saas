@@ -1,0 +1,106 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    // --- STAGE 1: INFRASTRUCTURE ---
+    {
+      "label": "Start Docker",
+      "type": "shell",
+      "command": "docker compose up -d",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "group": "services"
+      }
+    },
+
+    // --- STAGE 2: INDIVIDUAL SERVICES ---
+    {
+      "label": "Start Frontend",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "group": "services"
+      }
+    },
+    {
+      "label": "Start API Service",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": { "cwd": "${workspaceFolder}/services/api-service" },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "group": "services"
+      }
+    },
+    {
+      "label": "Start Processing Service",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": { "cwd": "${workspaceFolder}/services/processing-service" },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "group": "services"
+      }
+    },
+    {
+      "label": "Start Embedding Service",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": { "cwd": "${workspaceFolder}/services/embedding-service" },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "group": "services"
+      }
+    },
+
+    // --- GROUPING TASK (HIDDEN) ---
+    // This groups all Node apps to run in parallel
+    {
+      "label": "Start All Node Apps",
+      "type": "shell",
+      "command": "echo 'Starting all node services...'",
+      "dependsOn": [
+        "Start API Service",
+        "Start Processing Service",
+        "Start Embedding Service",
+        "Start Frontend"
+      ],
+      "presentation": { "reveal": "silent", "echo": false }
+    },
+
+    // --- MASTER COMMAND ---
+    // This runs Docker FIRST, then triggers the Node Apps group
+    {
+      "label": "Start All Services",
+      "type": "shell",
+      "command": "echo 'Docker started. Now launching apps...'",
+      "dependsOrder": "sequence",
+      "dependsOn": ["Start Docker", "Start All Node Apps"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Start Backend Services Only",
+      "type": "shell",
+      "command": "echo 'Starting backend microservices...'",
+      "dependsOn": [
+        "Start API Service",
+        "Start Processing Service",
+        "Start Embedding Service"
+      ],
+      "presentation": {
+        "reveal": "silent",
+        "echo": false,
+        "panel": "shared"
+      }
+    }
+  ]
+}
