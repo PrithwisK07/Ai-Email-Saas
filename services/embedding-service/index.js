@@ -133,7 +133,7 @@ async function main() {
 
           if (chunks.length === 0) {
             console.log(
-              `[🟡] Skipping email ${email_id}: No text left after filtering.`
+              `[🟡] Skipping email ${email_id}: No text left after filtering.`,
             );
             rabbitChannel.ack(msg);
             return;
@@ -141,7 +141,7 @@ async function main() {
 
           if (chunks.length > 300) {
             console.log(
-              `[⚠️] Email ${email_id} has ${chunks.length} chunks (> 300). Skipping to avoid heavy embedding load.`
+              `[⚠️] Email ${email_id} has ${chunks.length} chunks (> 300). Skipping to avoid heavy embedding load.`,
             );
             rabbitChannel.ack(msg);
             return;
@@ -165,7 +165,7 @@ async function main() {
 
           console.log(
             "Sample object to store (no vector):",
-            JSON.stringify(objectsToStore[0], null, 2)
+            JSON.stringify(objectsToStore[0], null, 2),
           );
 
           // --- (REMOVED) Vector verification steps ---
@@ -176,13 +176,12 @@ async function main() {
           const collection =
             weaviateClient.collections.get(WEAVIATE_CLASS_NAME);
 
-          const batchResponse = await collection.data.insertMany(
-            objectsToStore
-          );
+          const batchResponse =
+            await collection.data.insertMany(objectsToStore);
 
           const successCount = Object.keys(batchResponse.uuids).length;
           console.log(
-            `[✅] Stored ${successCount} chunks for email ${email_id} in Weaviate.`
+            `[✅] Stored ${successCount} chunks for email ${email_id} in Weaviate.`,
           );
 
           if (
@@ -191,7 +190,7 @@ async function main() {
           ) {
             console.error(
               `[❌] Errors during batch import for ${email_id}:`,
-              batchResponse.errors
+              batchResponse.errors,
             );
           }
 
@@ -205,7 +204,7 @@ async function main() {
       },
       {
         noAck: false, // We will manually ack/nack
-      }
+      },
     );
   } catch (error) {
     console.error("Failed to start embedding service:", error.message);
