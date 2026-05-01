@@ -232,13 +232,13 @@ The `res/` folder contains visual references for the application UI and workflow
 
 Below are the visual assets for quick reference:
 
-![Overall Preview](res/overall preview.png)
+![Overall Preview](res/overall%20preview.png)
 
-![AI Compose](res/ai compose.png)
+![AI Compose](res/ai%20compose.png)
 
-![AI Summary](res/ai summary.png)
+![AI Summary](res/ai%20summary.png)
 
-![Compose & Draft](res/compose & draft.png)
+![Compose & Draft](res/compose%20&%20draft.png)
 
 ![Settings](res/settings.png)
 
