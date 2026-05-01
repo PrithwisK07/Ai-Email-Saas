@@ -30,6 +30,17 @@ This project is an AI email SaaS prototype that:
 - Generates embeddings in Weaviate using Ollama vectorization
 - Supports Google OAuth, email send/receive workflows, and AI-powered email summaries
 
+## Features
+
+- AI-powered email summaries and insights
+- Secure JWT-based authentication and Google OAuth integration
+- Scalable queue-driven processing with RabbitMQ
+- Vector search and embedding storage using Weaviate and Ollama
+- Modular microservices for ingestion, processing, and embedding
+- AI powered email compose, drafts, and workflow UI with Next.js
+- PostgreSQL-backed email storage and metadata tracking
+- Responsive development setup with Docker Compose
+
 ## Architecture
 
 The system is split into four main application layers:
